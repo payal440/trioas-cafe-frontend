@@ -178,6 +178,10 @@ export const superAdminApi = {
     );
     return { admin: extractData(res) };
   },
+  deleteClientAdmin: async (clientId: string, adminId: string): Promise<{ admin: ClientAdmin }> => {
+    const res = await apiClient.delete(`/api/super-admin/clients/${clientId}/admins/${adminId}`, { role: 'super_admin' } as any);
+    return { admin: extractData(res) };
+  },
   listRewards: async (query?: { isRedeemed?: boolean | string; clientId?: string; page?: number; limit?: number }): Promise<{ rewards: CustomerReward[]; pagination: any }> => {
     const res = await apiClient.get('/api/super-admin/rewards', {
       params: query,

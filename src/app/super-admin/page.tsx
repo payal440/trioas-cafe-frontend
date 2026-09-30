@@ -142,6 +142,26 @@ export default function SuperAdminPage() {
     sendWelcomeEmail: true,
   });
 
+  // Edit & Delete Admin States
+  const [editingAdminTarget, setEditingAdminTarget] = useState<{
+    clientId: string;
+    adminId: string;
+    name: string;
+    email: string;
+    phone: string;
+    role: string;
+    password?: string;
+  } | null>(null);
+  const [isUpdatingAdmin, setIsUpdatingAdmin] = useState(false);
+
+  const [deletingAdminTarget, setDeletingAdminTarget] = useState<{
+    clientId: string;
+    adminId: string;
+    name: string;
+    cafeName: string;
+  } | null>(null);
+  const [isDeletingAdmin, setIsDeletingAdmin] = useState(false);
+
   // 5. Customers CRM State & Profile Drawer
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [selectedCustomerProfile, setSelectedCustomerProfile] = useState<any | null>(null);
@@ -445,6 +465,75 @@ export default function SuperAdminPage() {
       loadMasterData();
     } catch (err: any) {
       toast(err.message || 'Could not create admin account', 'error');
+    }
+  };
+
+  // Edit & Delete Admin Handlers
+  const handleOpenEditAdmin = (admin: any) => {
+    setEditingAdminTarget({
+      clientId: admin.clientId,
+      adminId: admin.id,
+      name: admin.name || '',
+      email: admin.email || '',
+      phone: admin.phone || '',
+      role: admin.role || 'Admin',
+      password: '',
+    });
+  };
+
+  const handleSaveEditAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAdminTarget) return;
+
+    try {
+      setIsUpdatingAdmin(true);
+      const payload: any = {
+        name: editingAdminTarget.name.trim(),
+        email: editingAdminTarget.email.trim(),
+      };
+      if (editingAdminTarget.phone?.trim()) {
+        payload.phone = editingAdminTarget.phone.trim();
+      }
+      if (editingAdminTarget.password?.trim()) {
+        payload.password = editingAdminTarget.password.trim();
+      }
+
+      await superAdminApi.updateClientAdmin(
+        editingAdminTarget.clientId,
+        editingAdminTarget.adminId,
+        payload
+      );
+
+      toast(`Admin "${editingAdminTarget.name}" details updated!`, 'success');
+      setEditingAdminTarget(null);
+      loadMasterData();
+    } catch (err: any) {
+      toast(err.message || 'Failed to update admin', 'error');
+    } finally {
+      setIsUpdatingAdmin(false);
+    }
+  };
+
+  const confirmDeleteAdmin = (clientId: string, adminId: string, name: string, cafeName: string) => {
+    setDeletingAdminTarget({ clientId, adminId, name, cafeName });
+  };
+
+  const handleExecuteDeleteAdmin = async () => {
+    if (!deletingAdminTarget) return;
+
+    try {
+      setIsDeletingAdmin(true);
+      await superAdminApi.deleteClientAdmin(
+        deletingAdminTarget.clientId,
+        deletingAdminTarget.adminId
+      );
+      toast(`Admin "${deletingAdminTarget.name}" removed successfully!`, 'success');
+      setDeletingAdminTarget(null);
+      loadMasterData();
+    } catch (err: any) {
+      toast(err.message || 'Failed to delete admin', 'error');
+    } finally {
+      setIsDeletingAdmin(false);
     }
   };
 
@@ -1581,14 +1670,15 @@ export default function SuperAdminPage() {
             </div>
 
             <div className="glass-panel" style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.86rem' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
                 <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.12)', color: '#cbd5e1', fontSize: '0.8rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                    <th style={{ padding: '16px 20px' }}>Admin</th>
-                    <th style={{ padding: '16px 20px' }}>Cafe Source</th>
-                    <th style={{ padding: '16px 20px' }}>Role</th>
-                    <th style={{ padding: '16px 20px' }}>Last Login</th>
-                    <th style={{ padding: '16px 20px' }}>Status</th>
+                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.12)', color: '#cbd5e1', fontSize: '0.76rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                    <th style={{ padding: '10px 14px' }}>Admin</th>
+                    <th style={{ padding: '10px 14px' }}>Cafe Source</th>
+                    <th style={{ padding: '10px 14px' }}>Role</th>
+                    <th style={{ padding: '10px 14px' }}>Last Login</th>
+                    <th style={{ padding: '10px 14px' }}>Status</th>
+                    <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1596,8 +1686,10 @@ export default function SuperAdminPage() {
                     const realAdmins = clientsList.flatMap((client) =>
                       (client.clientAdmins || []).map((adm: ClientAdmin) => ({
                         id: adm.id,
+                        clientId: client.id,
                         name: adm.name,
                         email: adm.email,
+                        phone: adm.phone,
                         cafe: client.name,
                         role: 'Admin',
                         login: adm.lastLoginAt ? new Date(adm.lastLoginAt).toLocaleDateString() : 'Active',
@@ -1606,26 +1698,58 @@ export default function SuperAdminPage() {
                     );
 
                     const listToRender = realAdmins.length > 0 ? realAdmins : [
-                      { id: '1', name: 'Rahul Verma', email: 'rahul@triocafe.com', cafe: 'Trio Cafe', role: 'Admin', login: '2 min ago', status: true },
-                      { id: '2', name: 'Priya Sharma', email: 'priya@aromacafe.com', cafe: 'Cafe Aroma', role: 'Manager', login: 'Yesterday', status: true },
-                      { id: '3', name: 'Amit Desai', email: 'amit@dailygrind.com', cafe: 'The Daily Grind', role: 'Admin', login: '3 days ago', status: true },
+                      { id: '1', clientId: clientsList[0]?.id || '', name: 'Rahul Verma', email: 'rahul@triocafe.com', phone: '', cafe: 'Trio Cafe', role: 'Admin', login: '2 min ago', status: true },
+                      { id: '2', clientId: clientsList[0]?.id || '', name: 'Priya Sharma', email: 'priya@aromacafe.com', phone: '', cafe: 'Cafe Aroma', role: 'Manager', login: 'Yesterday', status: true },
+                      { id: '3', clientId: clientsList[0]?.id || '', name: 'Amit Desai', email: 'amit@dailygrind.com', phone: '', cafe: 'The Daily Grind', role: 'Admin', login: '3 days ago', status: true },
                     ];
 
                     return listToRender.map((adm) => (
                       <tr key={adm.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                        <td style={{ padding: '16px 20px' }}>
-                          <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#ffffff' }}>{adm.name}</div>
-                          <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginTop: '2px' }}>{adm.email}</div>
+                        <td style={{ padding: '10px 14px' }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#ffffff' }}>{adm.name}</div>
+                          <div style={{ color: '#94a3b8', fontSize: '0.74rem', marginTop: '1px' }}>{adm.email}</div>
                         </td>
-                        <td style={{ padding: '16px 20px', color: '#f8fafc', fontWeight: 600 }}>{adm.cafe}</td>
-                        <td style={{ padding: '16px 20px' }}>
-                          <span className="badge badge-indigo">{adm.role}</span>
+                        <td style={{ padding: '10px 14px', color: '#f8fafc', fontWeight: 600, fontSize: '0.82rem' }}>{adm.cafe}</td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span className="badge badge-indigo" style={{ padding: '2px 8px', fontSize: '0.7rem' }}>{adm.role}</span>
                         </td>
-                        <td style={{ padding: '16px 20px', color: '#cbd5e1' }}>{adm.login}</td>
-                        <td style={{ padding: '16px 20px' }}>
-                          <span className={`badge ${adm.status ? 'badge-emerald' : 'badge-gold'}`}>
+                        <td style={{ padding: '10px 14px', color: '#cbd5e1', fontSize: '0.78rem' }}>{adm.login}</td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <span className={`badge ${adm.status ? 'badge-emerald' : 'badge-gold'}`} style={{ padding: '2px 8px', fontSize: '0.7rem' }}>
                             ● {adm.status ? 'Active' : 'Inactive'}
                           </span>
+                        </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                          <div style={{ display: 'inline-flex', gap: '6px' }}>
+                            <button
+                              onClick={() => handleOpenEditAdmin(adm)}
+                              className="btn-secondary"
+                              style={{ padding: '5px 9px', fontSize: '0.75rem' }}
+                              title="Edit Admin"
+                            >
+                              <Edit size={13} />
+                            </button>
+                            <button
+                              onClick={() => confirmDeleteAdmin(adm.clientId, adm.id, adm.name, adm.cafe)}
+                              disabled={isDeletingAdmin && deletingAdminTarget?.adminId === adm.id}
+                              className="btn-secondary"
+                              style={{
+                                padding: '5px 9px',
+                                fontSize: '0.75rem',
+                                color: '#fb7185',
+                                borderColor: 'rgba(244, 63, 94, 0.35)',
+                                background: 'rgba(244, 63, 94, 0.08)',
+                                opacity: isDeletingAdmin && deletingAdminTarget?.adminId === adm.id ? 0.6 : 1,
+                              }}
+                              title="Delete Admin"
+                            >
+                              {isDeletingAdmin && deletingAdminTarget?.adminId === adm.id ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <Trash2 size={13} />
+                              )}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ));
@@ -3056,6 +3180,191 @@ export default function SuperAdminPage() {
                   <>
                     <Trash2 size={16} />
                     <span>Delete Cafe</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: EDIT CAFE ADMIN CARD POPUP MODAL */}
+      {/* ============================================================== */}
+      {editingAdminTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div
+            className="glass-panel"
+            style={{
+              width: '100%',
+              maxWidth: '480px',
+              padding: '32px',
+              borderRadius: 'var(--radius-lg)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.75)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '22px' }}>
+              <div>
+                <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#ffffff', margin: 0 }}>Edit Cafe Admin</h3>
+                <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Update admin details and permissions</p>
+              </div>
+              <button onClick={() => setEditingAdminTarget(null)} style={{ color: 'var(--text-muted)' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditAdmin}>
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '5px' }}>Full Name</label>
+                <input
+                  type="text"
+                  required
+                  className="input-field"
+                  value={editingAdminTarget.name}
+                  onChange={(e) => setEditingAdminTarget({ ...editingAdminTarget, name: e.target.value })}
+                />
+              </div>
+
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '5px' }}>Email Address</label>
+                <input
+                  type="email"
+                  required
+                  className="input-field"
+                  value={editingAdminTarget.email}
+                  onChange={(e) => setEditingAdminTarget({ ...editingAdminTarget, email: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '5px' }}>Phone</label>
+                  <input
+                    type="tel"
+                    className="input-field"
+                    value={editingAdminTarget.phone}
+                    onChange={(e) => setEditingAdminTarget({ ...editingAdminTarget, phone: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '5px' }}>Role</label>
+                  <select
+                    className="input-field"
+                    value={editingAdminTarget.role}
+                    onChange={(e) => setEditingAdminTarget({ ...editingAdminTarget, role: e.target.value })}
+                  >
+                    <option value="Admin">Admin</option>
+                    <option value="Manager">Manager</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '22px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '5px' }}>
+                  Reset Password <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>(leave blank to keep unchanged)</span>
+                </label>
+                <input
+                  type="password"
+                  placeholder="••••••••"
+                  className="input-field"
+                  value={editingAdminTarget.password || ''}
+                  onChange={(e) => setEditingAdminTarget({ ...editingAdminTarget, password: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  disabled={isUpdatingAdmin}
+                  onClick={() => setEditingAdminTarget(null)}
+                  className="btn-secondary"
+                  style={{ opacity: isUpdatingAdmin ? 0.5 : 1 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingAdmin}
+                  className="btn-primary"
+                  style={{ opacity: isUpdatingAdmin ? 0.7 : 1 }}
+                >
+                  {isUpdatingAdmin ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Save Changes</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: IN-APP DELETE CAFE ADMIN CONFIRMATION */}
+      {/* ============================================================== */}
+      {deletingAdminTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '440px', padding: '28px', border: '1px solid rgba(244, 63, 94, 0.3)', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+              <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(244, 63, 94, 0.12)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fb7185', flexShrink: 0 }}>
+                <AlertTriangle size={22} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#fff' }}>Remove Admin</h3>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>Confirm admin removal</p>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '22px' }}>
+              Are you sure you want to remove <strong style={{ color: '#fff' }}>&quot;{deletingAdminTarget.name}&quot;</strong> from <strong style={{ color: '#f59e0b' }}>{deletingAdminTarget.cafeName}</strong>?
+              This will revoke their login access to the cafe admin portal.
+            </p>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                disabled={isDeletingAdmin}
+                onClick={() => setDeletingAdminTarget(null)}
+                className="btn-secondary"
+                style={{ opacity: isDeletingAdmin ? 0.5 : 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingAdmin}
+                onClick={handleExecuteDeleteAdmin}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: '#e11d48',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '9px 18px',
+                  borderRadius: '10px',
+                  fontSize: '0.88rem',
+                  fontWeight: 600,
+                  cursor: isDeletingAdmin ? 'not-allowed' : 'pointer',
+                  opacity: isDeletingAdmin ? 0.7 : 1,
+                  boxShadow: '0 4px 14px rgba(225, 29, 72, 0.4)',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {isDeletingAdmin ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Removing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    <span>Remove Admin</span>
                   </>
                 )}
               </button>
