@@ -222,6 +222,21 @@ export const superAdminApi = {
   deleteCustomer: async (id: string): Promise<void> => {
     await apiClient.delete(`/api/super-admin/customers/${id}`, { role: 'super_admin' } as any);
   },
+  listLoyaltyPrograms: async (query?: { search?: string; clientId?: string; isActive?: boolean | string; page?: number; limit?: number }): Promise<{ programs: any[]; pagination: any }> => {
+    const res = await apiClient.get('/api/super-admin/loyalty-programs', {
+      params: query,
+      role: 'super_admin',
+    } as any);
+    const data = extractData(res);
+    return {
+      programs: data.items || data || [],
+      pagination: data.pagination,
+    };
+  },
+  setLoyaltyProgramStatus: async (id: string, isActive: boolean): Promise<{ program: any }> => {
+    const res = await apiClient.patch(`/api/super-admin/loyalty-programs/${id}/status`, { isActive }, { role: 'super_admin' } as any);
+    return extractData(res);
+  },
 };
 
 // ================= CLIENT ADMIN (CAFE OWNER) API =================

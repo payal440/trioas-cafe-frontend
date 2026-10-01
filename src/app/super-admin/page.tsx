@@ -216,15 +216,55 @@ export default function SuperAdminPage() {
 
   // 6. Rewards Subtab State ('rewards' | 'redemptions')
   const [rewardsSubtab, setRewardsSubtab] = useState<'rewards' | 'redemptions'>('rewards');
-  const [showCreateRewardModal, setShowCreateRewardModal] = useState(false);
-  const [newRewardForm, setNewRewardForm] = useState({
-    name: 'Free Artisanal Beverage',
-    description: 'Complimentary drink upon completing milestone',
-    clientId: '',
-    pointsRequired: 5,
-    rewardType: 'FREE_ITEM',
-    expiry: '2026-12-31',
-  });
+
+  // Rewards Search & Filter States
+  const [rewardSearchQuery, setRewardSearchQuery] = useState('');
+  const [rewardCafeFilter, setRewardCafeFilter] = useState('all');
+  const [rewardStatusFilter, setRewardStatusFilter] = useState('all');
+  const [rewardTypeFilter, setRewardTypeFilter] = useState('all');
+  const [rewardSortBy, setRewardSortBy] = useState('popular');
+  const [viewingReward, setViewingReward] = useState<any | null>(null);
+
+  // Dynamic Rewards & Redemptions data loaded from Database (Zero static dummy data)
+  const [rewardsCatalog, setRewardsCatalog] = useState<any[]>([]);
+  const [isRewardsLoading, setIsRewardsLoading] = useState(false);
+
+  // Redemptions Search & Filter States
+  const [redemptionSearchQuery, setRedemptionSearchQuery] = useState('');
+  const [redemptionCafeFilter, setRedemptionCafeFilter] = useState('all');
+  const [redemptionStatusFilter, setRedemptionStatusFilter] = useState('all');
+  const [redemptionDateFilter, setRedemptionDateFilter] = useState('all');
+  const [redemptionTypeFilter, setRedemptionTypeFilter] = useState('all');
+  const [viewingRedemption, setViewingRedemption] = useState<any | null>(null);
+  const [redemptionsList, setRedemptionsList] = useState<any[]>([]);
+
+  // Toggle Reward Active / Suspended State in Database via API
+  const handleToggleRewardStatus = async (rewardId: string) => {
+    try {
+      const target = rewardsCatalog.find((r) => r.id === rewardId);
+      if (!target) return;
+      const nextActive = target.status !== 'Active';
+      const nextStatusStr = nextActive ? 'Active' : 'Deactivated';
+
+      await superAdminApi.setLoyaltyProgramStatus(rewardId, nextActive);
+
+      toast(
+        !nextActive
+          ? `Reward "${target.name}" deactivated / suspended.`
+          : `Reward "${target.name}" activated and available for redemption.`,
+        !nextActive ? 'error' : 'success'
+      );
+
+      setRewardsCatalog((prev) =>
+        prev.map((r) => (r.id === rewardId ? { ...r, status: nextStatusStr } : r))
+      );
+      setViewingReward((curr: any) =>
+        curr && curr.id === rewardId ? { ...curr, status: nextStatusStr } : curr
+      );
+    } catch (err: any) {
+      toast(err.message || 'Failed to update reward status', 'error');
+    }
+  };
 
   // 8. WhatsApp Logs Subtab / Filter
   const [whatsappStatusFilter, setWhatsappStatusFilter] = useState<string>('all');
@@ -298,19 +338,73 @@ export default function SuperAdminPage() {
   const loadMasterData = async () => {
     try {
       setLoading(true);
-      const [stats, clientsRes, rewardsRes, whatsappRes, customersRes] = await Promise.all([
-        superAdminApi.dashboard(),
-        superAdminApi.listClients(),
-        superAdminApi.listRewards(),
-        superAdminApi.listWhatsAppLogs(),
-        superAdminApi.listCustomers(),
-      ]);
+      const [statsRes, clientsRes, rewardsRes, whatsappRes, customersRes, programsRes] =
+        await Promise.allSettled([
+          superAdminApi.dashboard(),
+          superAdminApi.listClients(),
+          superAdminApi.listRewards(),
+          superAdminApi.listWhatsAppLogs(),
+          superAdminApi.listCustomers(),
+          superAdminApi.listLoyaltyPrograms(),
+        ]);
 
-      setDashboardStats(stats);
-      setClientsList(clientsRes.clients || []);
-      setRewardsList(rewardsRes.rewards || []);
-      setWhatsappLogs(whatsappRes.logs || []);
-      setCustomersList(customersRes.customers || []);
+      if (statsRes.status === 'fulfilled') setDashboardStats(statsRes.value);
+      if (clientsRes.status === 'fulfilled') setClientsList(clientsRes.value.clients || []);
+      if (rewardsRes.status === 'fulfilled') setRewardsList(rewardsRes.value.rewards || []);
+      if (whatsappRes.status === 'fulfilled') setWhatsappLogs(whatsappRes.value.logs || []);
+      if (customersRes.status === 'fulfilled') setCustomersList(customersRes.value.customers || []);
+
+      // Populate live dynamic rewards catalog from database
+      if (programsRes.status === 'fulfilled') {
+        const rawPrograms = (programsRes.value as any)?.programs || [];
+        const mappedCatalog = rawPrograms.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description || 'Complimentary loyalty perk for frequent customers.',
+          cafe: p.client?.name || 'Cafe',
+          clientId: p.clientId,
+          type: p.rewardType || 'FREE_ITEM',
+          typeLabel:
+            p.rewardType === 'FREE_ITEM'
+              ? 'Free Item'
+              : p.rewardType === 'DISCOUNT'
+                ? 'Discount'
+                : 'Voucher / Perk',
+          points: p.requiredVisits || 1,
+          value: p.rewardValue || 'Standard Reward',
+          redeemed: p._count?.customerRewards ?? 0,
+          expiry: p.validTill || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          status: p.isActive ? 'Active' : 'Deactivated',
+          createdBy: p.client?.clientAdmins?.[0]?.name || p.client?.clientAdmins?.[0]?.email || 'Cafe Admin',
+          createdDate: p.createdAt,
+          raw: p,
+        }));
+        setRewardsCatalog(mappedCatalog);
+      } else {
+        console.warn('Loyalty programs fetch failed:', programsRes.reason);
+      }
+
+      // Populate live dynamic redemptions list from database
+      if (rewardsRes.status === 'fulfilled') {
+        const rawRewards = rewardsRes.value.rewards || [];
+        const mappedRedemptions = rawRewards.map((cr: any) => ({
+          id: cr.id,
+          customer: cr.customer?.name || 'Customer',
+          phone: cr.customer?.phone || '-',
+          reward: cr.program?.name || cr.rewardValue || 'Reward',
+          cafe: cr.client?.name || 'Cafe',
+          points: cr.program?.requiredVisits || 1,
+          date: cr.redeemedAt
+            ? new Date(cr.redeemedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+            : new Date(cr.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+          rawDate: cr.redeemedAt || cr.createdAt,
+          status: cr.isRedeemed ? 'Redeemed' : 'Pending',
+          type: cr.program?.rewardType || 'FREE_ITEM',
+          code: cr.rewardCode || '-',
+          raw: cr,
+        }));
+        setRedemptionsList(mappedRedemptions);
+      }
 
       // If viewing cafe details, refresh its activity
       if (selectedCafeDetail) {
@@ -658,13 +752,6 @@ export default function SuperAdminPage() {
     } finally {
       setIsDeletingCustomer(false);
     }
-  };
-
-  // 8. Create Reward Handler
-  const handleCreateReward = async (e: React.FormEvent) => {
-    e.preventDefault();
-    toast(`Reward "${newRewardForm.name}" configured and available!`, 'success');
-    setShowCreateRewardModal(false);
   };
 
   // 15. Send Reply in Support Ticket
@@ -2655,98 +2742,783 @@ export default function SuperAdminPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
                   <div className="glass-panel" style={{ padding: '18px', textAlign: 'center' }}>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total Rewards</span>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px' }}>320</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px' }}>
+                      {rewardsCatalog.length}
+                    </div>
                   </div>
                   <div className="glass-panel" style={{ padding: '18px', textAlign: 'center' }}>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Active Rewards</span>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#10b981' }}>75</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#10b981' }}>
+                      {rewardsCatalog.filter(r => r.status === 'Active').length}
+                    </div>
                   </div>
                   <div className="glass-panel" style={{ padding: '18px', textAlign: 'center' }}>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Redeemed</span>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#a78bfa' }}>245</div>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#a78bfa' }}>
+                      {redemptionsList.filter(r => r.status === 'Redeemed').length}
+                    </div>
                   </div>
                   <div className="glass-panel" style={{ padding: '18px', textAlign: 'center' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Expired</span>
-                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#fb7185' }}>12</div>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Deactivated</span>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#fb7185' }}>
+                      {rewardsCatalog.filter(r => r.status !== 'Active').length}
+                    </div>
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    onClick={() => setShowCreateRewardModal(true)}
-                    className="btn-primary"
-                    style={{ fontSize: '0.85rem', padding: '8px 16px' }}
+                {/* Rewards Search & Filters Bar */}
+                <div
+                  className="glass-panel"
+                  style={{
+                    padding: '16px 20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    borderRadius: '16px',
+                    border: '1px solid var(--border-card)',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                      gap: '12px',
+                      alignItems: 'center',
+                    }}
                   >
-                    <Plus size={15} />
-                    <span>Create Reward</span>
-                  </button>
+                    {/* 1. Search reward name */}
+                    <div style={{ position: 'relative' }}>
+                      <Search
+                        size={14}
+                        style={{
+                          position: 'absolute',
+                          left: '12px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: 'var(--text-muted)',
+                          pointerEvents: 'none',
+                        }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Search reward name..."
+                        value={rewardSearchQuery}
+                        onChange={(e) => setRewardSearchQuery(e.target.value)}
+                        className="input-field"
+                        style={{
+                          paddingLeft: '34px',
+                          paddingRight: rewardSearchQuery ? '32px' : '12px',
+                          fontSize: '0.8rem',
+                          height: '38px',
+                        }}
+                      />
+                      {rewardSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setRewardSearchQuery('')}
+                          style={{
+                            position: 'absolute',
+                            right: '10px',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                            padding: 0,
+                          }}
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 2. All Cafes */}
+                    <div>
+                      <select
+                        className="input-field"
+                        value={rewardCafeFilter}
+                        onChange={(e) => setRewardCafeFilter(e.target.value)}
+                        style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                      >
+                        <option value="all">All Cafes</option>
+                        {clientsList.map((c) => (
+                          <option key={c.id || c.name} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* 3. All Status */}
+                    <div>
+                      <select
+                        className="input-field"
+                        value={rewardStatusFilter}
+                        onChange={(e) => setRewardStatusFilter(e.target.value)}
+                        style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                      >
+                        <option value="all">All Status</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                        <option value="expired">Expired</option>
+                      </select>
+                    </div>
+
+                    {/* 4. Reward Type */}
+                    <div>
+                      <select
+                        className="input-field"
+                        value={rewardTypeFilter}
+                        onChange={(e) => setRewardTypeFilter(e.target.value)}
+                        style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                      >
+                        <option value="all">Reward Type: All</option>
+                        <option value="FREE_ITEM">Free Item</option>
+                        <option value="DISCOUNT">Discount</option>
+                        <option value="VOUCHER">Special Perk / Voucher</option>
+                      </select>
+                    </div>
+
+                    {/* 5. Sort By */}
+                    <div>
+                      <select
+                        className="input-field"
+                        value={rewardSortBy}
+                        onChange={(e) => setRewardSortBy(e.target.value)}
+                        style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                      >
+                        <option value="popular">Sort By: Most Popular</option>
+                        <option value="points_asc">Sort By: Points (Low → High)</option>
+                        <option value="points_desc">Sort By: Points (High → Low)</option>
+                        <option value="newest">Sort By: Newest Added</option>
+                        <option value="expiring">Sort By: Expiring Soon</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {(rewardSearchQuery || rewardCafeFilter !== 'all' || rewardStatusFilter !== 'all' || rewardTypeFilter !== 'all') && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRewardSearchQuery('');
+                          setRewardCafeFilter('all');
+                          setRewardStatusFilter('all');
+                          setRewardTypeFilter('all');
+                          setRewardSortBy('popular');
+                        }}
+                        className="btn-secondary"
+                        style={{ padding: '5px 12px', fontSize: '0.74rem', color: '#fb7185' }}
+                      >
+                        <RefreshCw size={12} style={{ marginRight: '4px' }} />
+                        Clear Reward Filters
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Governance Oversight Bar */}
+                <div
+                  style={{
+                    padding: '12px 18px',
+                    borderRadius: '14px',
+                    background: 'rgba(245, 158, 11, 0.05)',
+                    border: '1px solid rgba(245, 158, 11, 0.18)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div
+                      style={{
+                        width: '34px',
+                        height: '34px',
+                        borderRadius: '8px',
+                        background: 'rgba(245, 158, 11, 0.15)',
+                        color: 'var(--accent-gold)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Shield size={16} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#fff' }}>
+                        Reward Governance & Platform Policy
+                      </div>
+                      <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+                        Cafe Admins create and own their cafe rewards. Super Admin regulates platform compliance, terms fair-use, and suspension/approval controls.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Table Header Counter */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                    Showing <strong style={{ color: '#fff' }}>
+                      {rewardsCatalog.filter(r => {
+                        if (rewardSearchQuery.trim()) {
+                          const q = rewardSearchQuery.toLowerCase();
+                          if (!r.name.toLowerCase().includes(q) && !r.cafe.toLowerCase().includes(q)) return false;
+                        }
+                        if (rewardCafeFilter !== 'all' && r.cafe !== rewardCafeFilter) return false;
+                        if (rewardStatusFilter !== 'all' && r.status.toLowerCase() !== rewardStatusFilter.toLowerCase()) return false;
+                        if (rewardTypeFilter !== 'all' && r.type !== rewardTypeFilter) return false;
+                        return true;
+                      }).length}
+                    </strong> of <strong>{rewardsCatalog.length}</strong> cafe reward programs
+                  </div>
                 </div>
 
                 {/* Rewards Table */}
                 <div className="glass-panel" style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
                     <thead>
-                      <tr style={{ borderBottom: '1px solid var(--border-card)', color: 'var(--text-muted)' }}>
+                      <tr style={{ borderBottom: '1px solid var(--border-card)', color: 'var(--text-muted)', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                         <th style={{ padding: '16px 20px' }}>Reward</th>
                         <th style={{ padding: '16px 20px' }}>Cafe</th>
-                        <th style={{ padding: '16px 20px' }}>Value</th>
+                        <th style={{ padding: '16px 20px' }}>Type</th>
+                        <th style={{ padding: '16px 20px' }}>Points</th>
                         <th style={{ padding: '16px 20px' }}>Redeemed</th>
+                        <th style={{ padding: '16px 20px' }}>Expiry</th>
                         <th style={{ padding: '16px 20px' }}>Status</th>
+                        <th style={{ padding: '16px 20px', textAlign: 'right' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {[
-                        { name: 'Free Artisanal Coffee', cafe: 'Trio Cafe', val: '₹120', redeemed: 42, status: 'Active' },
-                        { name: 'Free Gourmet Burger', cafe: 'Cafe Aroma', val: '₹250', redeemed: 27, status: 'Active' },
-                        { name: 'Complimentary Croissant', cafe: 'The Daily Grind', val: '₹95', redeemed: 18, status: 'Active' },
-                      ].map((r, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                          <td style={{ padding: '16px 20px', fontWeight: 700 }}>{r.name}</td>
-                          <td style={{ padding: '16px 20px', color: 'var(--text-secondary)' }}>{r.cafe}</td>
-                          <td style={{ padding: '16px 20px', color: 'var(--accent-gold)' }}>{r.val}</td>
-                          <td style={{ padding: '16px 20px' }}>{r.redeemed} times</td>
-                          <td style={{ padding: '16px 20px' }}>
-                            <span className="badge badge-emerald">● {r.status}</span>
-                          </td>
-                        </tr>
-                      ))}
+                      {(() => {
+                        const filtered = rewardsCatalog.filter((r) => {
+                          if (rewardSearchQuery.trim()) {
+                            const q = rewardSearchQuery.toLowerCase();
+                            const matchName = r.name.toLowerCase().includes(q);
+                            const matchCafe = r.cafe.toLowerCase().includes(q);
+                            if (!matchName && !matchCafe) return false;
+                          }
+                          if (rewardCafeFilter !== 'all' && r.cafe !== rewardCafeFilter) return false;
+                          if (rewardStatusFilter !== 'all') {
+                            if (r.status.toLowerCase() !== rewardStatusFilter.toLowerCase()) return false;
+                          }
+                          if (rewardTypeFilter !== 'all' && r.type !== rewardTypeFilter) return false;
+                          return true;
+                        }).sort((a, b) => {
+                          if (rewardSortBy === 'popular') return b.redeemed - a.redeemed;
+                          if (rewardSortBy === 'points_asc') return a.points - b.points;
+                          if (rewardSortBy === 'points_desc') return b.points - a.points;
+                          if (rewardSortBy === 'newest') return b.id.localeCompare(a.id);
+                          if (rewardSortBy === 'expiring') return new Date(a.expiry).getTime() - new Date(b.expiry).getTime();
+                          return 0;
+                        });
+
+                        if (filtered.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={8} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                No rewards found matching the selected filters.
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return filtered.map((r) => (
+                          <tr key={r.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                            <td style={{ padding: '16px 20px' }}>
+                              <div style={{ fontWeight: 700, color: '#fff', fontSize: '0.9rem' }}>{r.name}</div>
+                              <div style={{ color: 'var(--text-muted)', fontSize: '0.74rem', marginTop: '2px' }}>
+                                {r.description}
+                              </div>
+                            </td>
+                            <td style={{ padding: '16px 20px' }}>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  background: 'rgba(255,255,255,0.05)',
+                                  padding: '4px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '0.78rem',
+                                  color: 'var(--text-secondary)',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                <Coffee size={12} color="var(--accent-gold)" />
+                                <span>{r.cafe}</span>
+                              </span>
+                            </td>
+                            <td style={{ padding: '16px 20px' }}>
+                              <span className={`badge ${r.type === 'FREE_ITEM' ? 'badge-emerald' : 'badge-indigo'}`} style={{ fontSize: '0.72rem' }}>
+                                {r.typeLabel}
+                              </span>
+                            </td>
+                            <td style={{ padding: '16px 20px', fontWeight: 700, color: 'var(--accent-gold)', fontSize: '0.92rem' }}>
+                              {r.points} <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500 }}>pts</span>
+                            </td>
+                            <td style={{ padding: '16px 20px' }}>
+                              <strong style={{ color: '#fff' }}>{r.redeemed}</strong> <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>times</span>
+                            </td>
+                            <td style={{ padding: '16px 20px', color: '#cbd5e1', fontSize: '0.8rem' }}>
+                              {new Date(r.expiry).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </td>
+                            <td style={{ padding: '16px 20px' }}>
+                              <span className={`badge ${r.status === 'Active' ? 'badge-green' : r.status === 'Expired' ? 'badge-rose' : 'badge-gray'}`} style={{ fontSize: '0.72rem' }}>
+                                ● {r.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '16px 20px', textAlign: 'right' }}>
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', justifyContent: 'flex-end' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setViewingReward(r)}
+                                  className="btn-secondary"
+                                  style={{
+                                    padding: '6px 12px',
+                                    fontSize: '0.75rem',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    color: '#38bdf8',
+                                    borderColor: 'rgba(56, 189, 248, 0.25)',
+                                    fontWeight: 600,
+                                  }}
+                                  title="View Reward Details and Governance"
+                                >
+                                  <Eye size={13} />
+                                  <span>View Details</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleRewardStatus(r.id)}
+                                  className="btn-secondary"
+                                  style={{
+                                    padding: '6px 10px',
+                                    fontSize: '0.75rem',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    color: r.status === 'Active' ? '#fb7185' : '#10b981',
+                                    borderColor: r.status === 'Active' ? 'rgba(244, 63, 94, 0.3)' : 'rgba(16, 185, 129, 0.3)',
+                                  }}
+                                  title={r.status === 'Active' ? 'Deactivate Reward' : 'Activate Reward'}
+                                >
+                                  <Power size={13} />
+                                  <span>{r.status === 'Active' ? 'Deactivate' : 'Activate'}</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </div>
               </>
             ) : (
-              /* Redemptions Table */
-              <div className="glass-panel" style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-card)', color: 'var(--text-muted)' }}>
-                      <th style={{ padding: '16px 20px' }}>Customer</th>
-                      <th style={{ padding: '16px 20px' }}>Reward</th>
-                      <th style={{ padding: '16px 20px' }}>Cafe</th>
-                      <th style={{ padding: '16px 20px' }}>Date</th>
-                      <th style={{ padding: '16px 20px' }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[
-                      { cust: 'Payal Patel', reward: 'Free Artisanal Coffee', cafe: 'Trio Cafe', date: 'Today, 11:30 AM', status: 'Redeemed' },
-                      { cust: 'Rahul Khanna', reward: 'Free Gourmet Burger', cafe: 'Cafe Aroma', date: '18 Sep, 4:15 PM', status: 'Redeemed' },
-                      { cust: 'Kavita Joshi', reward: 'Complimentary Croissant', cafe: 'The Daily Grind', date: '16 Sep, 2:00 PM', status: 'Redeemed' },
-                    ].map((red, idx) => (
-                      <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                        <td style={{ padding: '16px 20px', fontWeight: 700 }}>{red.cust}</td>
-                        <td style={{ padding: '16px 20px', color: 'var(--accent-gold)' }}>{red.reward}</td>
-                        <td style={{ padding: '16px 20px' }}>{red.cafe}</td>
-                        <td style={{ padding: '16px 20px', color: 'var(--text-muted)' }}>{red.date}</td>
-                        <td style={{ padding: '16px 20px' }}>
-                          <span className="badge badge-emerald">🟢 {red.status}</span>
-                        </td>
+              <>
+                {/* Redemptions Summary Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                  <div className="glass-panel" style={{ padding: '18px', textAlign: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total Redemptions</span>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#fff' }}>
+                      {redemptionsList.length}
+                    </div>
+                  </div>
+                  <div className="glass-panel" style={{ padding: '18px', textAlign: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Successful</span>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#10b981' }}>
+                      {redemptionsList.filter((r) => r.status === 'Redeemed').length}
+                    </div>
+                  </div>
+                  <div className="glass-panel" style={{ padding: '18px', textAlign: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Pending</span>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: 'var(--accent-gold)' }}>
+                      {redemptionsList.filter((r) => r.status === 'Pending').length}
+                    </div>
+                  </div>
+                  <div className="glass-panel" style={{ padding: '18px', textAlign: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Cancelled</span>
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '2px', color: '#fb7185' }}>
+                      {redemptionsList.filter((r) => r.status === 'Cancelled').length}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Redemption Filters Bar */}
+                <div
+                  className="glass-panel"
+                  style={{
+                    padding: '16px 20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    borderRadius: '16px',
+                    border: '1px solid var(--border-card)',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                      gap: '12px',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {/* 1. Search Customer / Reward */}
+                    <div style={{ position: 'relative' }}>
+                      <Search
+                        size={14}
+                        style={{
+                          position: 'absolute',
+                          left: '12px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: 'var(--text-muted)',
+                          pointerEvents: 'none',
+                        }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Search Customer / Reward..."
+                        value={redemptionSearchQuery}
+                        onChange={(e) => setRedemptionSearchQuery(e.target.value)}
+                        className="input-field"
+                        style={{
+                          paddingLeft: '34px',
+                          paddingRight: redemptionSearchQuery ? '32px' : '12px',
+                          fontSize: '0.8rem',
+                          height: '38px',
+                        }}
+                      />
+                      {redemptionSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setRedemptionSearchQuery('')}
+                          style={{
+                            position: 'absolute',
+                            right: '10px',
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                            padding: 0,
+                          }}
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 2. Cafe */}
+                    <div>
+                      <select
+                        className="input-field"
+                        value={redemptionCafeFilter}
+                        onChange={(e) => setRedemptionCafeFilter(e.target.value)}
+                        style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                      >
+                        <option value="all">Cafe: All Cafes</option>
+                        {clientsList.map((c) => (
+                          <option key={c.id || c.name} value={c.name}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* 3. Redemption Status */}
+                    <div>
+                      <select
+                        className="input-field"
+                        value={redemptionStatusFilter}
+                        onChange={(e) => setRedemptionStatusFilter(e.target.value)}
+                        style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                      >
+                        <option value="all">Status: All Status</option>
+                        <option value="Redeemed">Status: Redeemed</option>
+                        <option value="Pending">Status: Pending</option>
+                        <option value="Cancelled">Status: Cancelled</option>
+                      </select>
+                    </div>
+
+                    {/* 4. Date Range */}
+                    <div>
+                      <select
+                        className="input-field"
+                        value={redemptionDateFilter}
+                        onChange={(e) => setRedemptionDateFilter(e.target.value)}
+                        style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                      >
+                        <option value="all">Date: All Time</option>
+                        <option value="today">Date: Today</option>
+                        <option value="7d">Date: Last 7 Days</option>
+                        <option value="30d">Date: Last 30 Days</option>
+                      </select>
+                    </div>
+
+                    {/* 5. Reward Type */}
+                    <div>
+                      <select
+                        className="input-field"
+                        value={redemptionTypeFilter}
+                        onChange={(e) => setRedemptionTypeFilter(e.target.value)}
+                        style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                      >
+                        <option value="all">Type: All Types</option>
+                        <option value="FREE_ITEM">Free Item</option>
+                        <option value="DISCOUNT">Discount</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {(redemptionSearchQuery || redemptionCafeFilter !== 'all' || redemptionStatusFilter !== 'all' || redemptionDateFilter !== 'all' || redemptionTypeFilter !== 'all') && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRedemptionSearchQuery('');
+                          setRedemptionCafeFilter('all');
+                          setRedemptionStatusFilter('all');
+                          setRedemptionDateFilter('all');
+                          setRedemptionTypeFilter('all');
+                        }}
+                        className="btn-secondary"
+                        style={{ padding: '5px 12px', fontSize: '0.74rem', color: '#fb7185' }}
+                      >
+                        <RefreshCw size={12} style={{ marginRight: '4px' }} />
+                        Clear Redemption Filters
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Redemptions Table */}
+                <div className="glass-panel" style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-card)', color: 'var(--text-muted)', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        <th style={{ padding: '16px 20px' }}>Customer</th>
+                        <th style={{ padding: '16px 20px' }}>Reward</th>
+                        <th style={{ padding: '16px 20px' }}>Cafe</th>
+                        <th style={{ padding: '16px 20px' }}>Points</th>
+                        <th style={{ padding: '16px 20px' }}>Date</th>
+                        <th style={{ padding: '16px 20px' }}>Status</th>
+                        <th style={{ padding: '16px 20px', textAlign: 'right' }}>Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const filtered = redemptionsList.filter((red) => {
+                          if (redemptionSearchQuery.trim()) {
+                            const q = redemptionSearchQuery.toLowerCase();
+                            const matchCust = red.customer.toLowerCase().includes(q);
+                            const matchRew = red.reward.toLowerCase().includes(q);
+                            const matchPhone = red.phone.includes(q);
+                            const matchCode = red.code.toLowerCase().includes(q);
+                            if (!matchCust && !matchRew && !matchPhone && !matchCode) return false;
+                          }
+                          if (redemptionCafeFilter !== 'all' && red.cafe !== redemptionCafeFilter) return false;
+                          if (redemptionStatusFilter !== 'all') {
+                            if (red.status.toLowerCase() !== redemptionStatusFilter.toLowerCase()) return false;
+                          }
+                          if (redemptionTypeFilter !== 'all' && red.type !== redemptionTypeFilter) return false;
+                          if (redemptionDateFilter !== 'all') {
+                            const d = new Date(red.rawDate);
+                            const now = new Date();
+                            if (redemptionDateFilter === 'today') {
+                              if (d.toDateString() !== now.toDateString()) return false;
+                            } else if (redemptionDateFilter === '7d') {
+                              const past7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+                              if (d < past7) return false;
+                            } else if (redemptionDateFilter === '30d') {
+                              const past30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+                              if (d < past30) return false;
+                            }
+                          }
+                          return true;
+                        });
+
+                        if (filtered.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={7} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                No redemptions found matching the selected filters.
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return filtered.map((red) => (
+                          <tr key={red.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                            <td style={{ padding: '16px 20px' }}>
+                              <div style={{ fontWeight: 700, color: '#fff' }}>{red.customer}</div>
+                              <div style={{ color: 'var(--text-muted)', fontSize: '0.74rem' }}>{red.phone}</div>
+                            </td>
+                            <td style={{ padding: '16px 20px' }}>
+                              <span style={{ fontWeight: 600, color: 'var(--accent-gold)' }}>{red.reward}</span>
+                              <div style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                Code: {red.code}
+                              </div>
+                            </td>
+                            <td style={{ padding: '16px 20px' }}>
+                              <span style={{ background: 'rgba(255,255,255,0.05)', padding: '3px 8px', borderRadius: '6px', fontSize: '0.78rem' }}>
+                                {red.cafe}
+                              </span>
+                            </td>
+                            <td style={{ padding: '16px 20px', fontWeight: 700, color: '#fff' }}>
+                              {red.points} pts
+                            </td>
+                            <td style={{ padding: '16px 20px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                              {red.date}
+                            </td>
+                            <td style={{ padding: '16px 20px' }}>
+                              <span
+                                className={`badge ${red.status === 'Redeemed'
+                                    ? 'badge-emerald'
+                                    : red.status === 'Pending'
+                                      ? 'badge-gold'
+                                      : 'badge-rose'
+                                  }`}
+                                style={{ fontSize: '0.72rem' }}
+                              >
+                                ● {red.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '16px 20px', textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                onClick={() => setViewingRedemption(red)}
+                                className="btn-secondary"
+                                style={{ padding: '5px 10px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#38bdf8' }}
+                                title="View Redemption Receipt"
+                              >
+                                <Eye size={13} />
+                                <span>Receipt</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
+
+            {/* ============================================================== */}
+            {/* REWARD ANALYTICS & INSIGHTS (Below Table) */}
+            {/* ============================================================== */}
+            <div style={{ marginTop: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Sparkles size={18} color="var(--accent-gold)" />
+                    <span>Reward Analytics</span>
+                  </h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', margin: '2px 0 0 0' }}>
+                    Cross-cafe redemption frequency, popular reward types, and branch performance telemetry.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' }}>
+                {/* 1. Most Redeemed Rewards */}
+                <div className="glass-panel" style={{ padding: '22px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff' }}>Most Redeemed Rewards</h4>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--accent-gold)', fontWeight: 600 }}>Top Performance</span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {[
+                      { name: 'Free Coffee', count: 42, pct: 48, color: 'var(--accent-gold)' },
+                      { name: 'Free Burger', count: 27, pct: 31, color: '#10b981' },
+                      { name: 'Croissant', count: 18, pct: 21, color: '#38bdf8' },
+                      { name: '15% Off Total Bill', count: 14, pct: 16, color: '#a78bfa' },
+                    ].map((item, idx) => (
+                      <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem' }}>
+                          <span style={{ fontWeight: 600, color: '#f1f5f9' }}>{item.name}</span>
+                          <span style={{ fontWeight: 700, color: item.color }}>{item.count}</span>
+                        </div>
+                        <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
+                          <div style={{ width: `${item.pct}%`, height: '100%', background: item.color, borderRadius: '3px' }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Cafe-wise Performance */}
+                <div className="glass-panel" style={{ padding: '22px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff' }}>Cafe-wise Performance</h4>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Claim Velocity</span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {[
+                      { cafe: 'Trio Cafe', total: 120, rate: '94% Success', top: 'Free Coffee' },
+                      { cafe: 'Cafe Aroma', total: 85, rate: '89% Success', top: 'Free Burger' },
+                      { cafe: 'The Daily Grind', total: 40, rate: '91% Success', top: 'Croissant' },
+                    ].map((c, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          padding: '12px 14px',
+                          borderRadius: '12px',
+                          background: 'rgba(255,255,255,0.02)',
+                          border: '1px solid rgba(255,255,255,0.05)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 700, color: '#fff', fontSize: '0.86rem' }}>{c.cafe}</div>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            Top Perk: <strong style={{ color: 'var(--text-secondary)' }}>{c.top}</strong>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontWeight: 800, color: 'var(--accent-gold)', fontSize: '0.95rem' }}>{c.total}</div>
+                          <span className="badge badge-emerald" style={{ fontSize: '0.65rem', marginTop: '2px' }}>{c.rate}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. Reward Type Distribution */}
+                <div className="glass-panel" style={{ padding: '22px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff' }}>Reward Type Distribution</h4>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Catalog Breakdown</span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                    <div style={{ padding: '14px 10px', background: 'rgba(16, 185, 129, 0.08)', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.2)', textAlign: 'center' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#10b981', textTransform: 'uppercase', fontWeight: 700 }}>Free Item</span>
+                      <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff', marginTop: '4px' }}>72%</div>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Highest ROI</span>
+                    </div>
+                    <div style={{ padding: '14px 10px', background: 'rgba(167, 139, 250, 0.08)', borderRadius: '12px', border: '1px solid rgba(167, 139, 250, 0.2)', textAlign: 'center' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#a78bfa', textTransform: 'uppercase', fontWeight: 700 }}>Discount</span>
+                      <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff', marginTop: '4px' }}>22%</div>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Bill boosters</span>
+                    </div>
+                    <div style={{ padding: '14px 10px', background: 'rgba(245, 158, 11, 0.08)', borderRadius: '12px', border: '1px solid rgba(245, 158, 11, 0.2)', textAlign: 'center' }}>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--accent-gold)', textTransform: 'uppercase', fontWeight: 700 }}>Voucher</span>
+                      <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff', marginTop: '4px' }}>6%</div>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Event perks</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -2822,35 +3594,7 @@ export default function SuperAdminPage() {
                     <th style={{ padding: '16px 20px', width: '100px', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {[
-                    { cust: 'Payal Patel', msg: 'Reward Unlocked: Free Coffee coupon code #REW-84', time: '10:30 AM', status: 'Delivered' },
-                    { cust: 'Rahul Khanna', msg: 'Welcome to Cafe Aroma Rewards', time: '10:42 AM', status: 'Delivered' },
-                    { cust: 'Amit Desai', msg: 'Your 5th coffee stamp is stamped!', time: '11:02 AM', status: 'Failed' },
-                  ].map((log, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                      <td style={{ padding: '16px 20px', fontWeight: 700 }}>{log.cust}</td>
-                      <td style={{ padding: '16px 20px', color: 'var(--text-secondary)' }}>{log.msg}</td>
-                      <td style={{ padding: '16px 20px', width: '120px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{log.time}</td>
-                      <td style={{ padding: '16px 20px', width: '130px', whiteSpace: 'nowrap' }}>
-                        <span className={`badge ${log.status === 'Delivered' ? 'badge-emerald' : 'badge-gold'}`}>
-                          {log.status === 'Delivered' ? '✓ Delivered' : '✕ Failed'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '16px 20px', width: '100px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {log.status === 'Failed' && (
-                          <button
-                            onClick={() => toast('Message queued for retry.', 'success')}
-                            className="btn-secondary"
-                            style={{ padding: '4px 10px', fontSize: '0.75rem', color: 'var(--accent-gold)' }}
-                          >
-                            Retry
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
+
               </table>
             </div>
           </div>
@@ -3835,60 +4579,6 @@ export default function SuperAdminPage() {
         </div>
       )}
 
-      {/* ============================================================== */}
-      {/* MODAL: CREATE REWARD MODAL */}
-      {/* ============================================================== */}
-      {showCreateRewardModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '460px', padding: '32px' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '16px' }}>Create Reward</h3>
-            <form onSubmit={handleCreateReward}>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Reward Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Free Coffee"
-                  className="input-field"
-                  value={newRewardForm.name}
-                  onChange={(e) => setNewRewardForm({ ...newRewardForm, name: e.target.value })}
-                />
-              </div>
-
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Description</label>
-                <input
-                  type="text"
-                  placeholder="Complimentary artisan brew"
-                  className="input-field"
-                  value={newRewardForm.description}
-                  onChange={(e) => setNewRewardForm({ ...newRewardForm, description: e.target.value })}
-                />
-              </div>
-
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px' }}>Points / Visits Required</label>
-                <input
-                  type="number"
-                  min="1"
-                  className="input-field"
-                  value={newRewardForm.pointsRequired}
-                  onChange={(e) => setNewRewardForm({ ...newRewardForm, pointsRequired: Number(e.target.value) })}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>
-                <button type="button" onClick={() => setShowCreateRewardModal(false)} className="btn-secondary">
-                  Cancel
-                </button>
-                <button type="submit" className="btn-primary">
-                  Create Reward
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* ============================================================== */}
       {/* MODAL: ONBOARD / CREATE CAFE MODAL */}
@@ -4344,262 +5034,799 @@ export default function SuperAdminPage() {
       {/* MODAL: EDIT CUSTOMER DETAILS */}
       {/* ============================================================== */}
       {editingCustomer && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 300,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            className="glass-panel"
+            style={{
+              width: '100%',
+              maxWidth: '480px',
+              padding: '32px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+              borderRadius: '24px',
+              border: '1px solid rgba(245, 158, 11, 0.25)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '42px',
+                    height: '42px',
+                    borderRadius: '12px',
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--accent-gold)',
+                  }}
+                >
+                  <Edit size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>Edit Customer</h3>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Update profile info for {editingCustomer.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingCustomer(null)}
+                style={{ color: 'var(--text-muted)', background: 'transparent', cursor: 'pointer' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateCustomer}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    className="input-field"
+                    value={customerEditForm.name}
+                    onChange={(e) => setCustomerEditForm({ ...customerEditForm, name: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Phone Number *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    className="input-field"
+                    value={customerEditForm.phone}
+                    onChange={(e) => setCustomerEditForm({ ...customerEditForm, phone: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    className="input-field"
+                    placeholder="name@example.com (optional)"
+                    value={customerEditForm.email}
+                    onChange={(e) => setCustomerEditForm({ ...customerEditForm, email: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Account Status
+                  </label>
+                  <select
+                    className="input-field"
+                    value={customerEditForm.isActive ? 'active' : 'inactive'}
+                    onChange={(e) => setCustomerEditForm({ ...customerEditForm, isActive: e.target.value === 'active' })}
+                  >
+                    <option value="active">Active (QR Pass & Points Enabled)</option>
+                    <option value="inactive">Inactive / Suspended</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  disabled={isUpdatingCustomer}
+                  onClick={() => setEditingCustomer(null)}
+                  className="btn-secondary"
+                  style={{ opacity: isUpdatingCustomer ? 0.5 : 1 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingCustomer}
+                  className="btn-primary"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    opacity: isUpdatingCustomer ? 0.7 : 1,
+                  }}
+                >
+                  {isUpdatingCustomer ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={16} />
+                      <span>Save Changes</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: IN-APP DELETE CUSTOMER CONFIRMATION */}
+      {/* ============================================================== */}
+      {deletingCustomerTarget && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 300,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
+          <div
+            className="glass-panel"
+            style={{
+              width: '100%',
+              maxWidth: '440px',
+              padding: '28px',
+              border: '1px solid rgba(244, 63, 94, 0.3)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+              borderRadius: '20px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+              <div
+                style={{
+                  width: '44px',
+                  height: '44px',
+                  borderRadius: '12px',
+                  background: 'rgba(244, 63, 94, 0.12)',
+                  border: '1px solid rgba(244, 63, 94, 0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#fb7185',
+                  flexShrink: 0,
+                }}
+              >
+                <AlertTriangle size={22} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#fff' }}>Delete Customer</h3>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>Confirm permanent removal</p>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '22px' }}>
+              Are you sure you want to permanently delete customer{' '}
+              <strong style={{ color: '#fff' }}>&quot;{deletingCustomerTarget.name}&quot;</strong>?
+              All associated visits, scan logs, loyalty progress, and rewards will be deleted. This action{' '}
+              <span style={{ color: '#fb7185', fontWeight: 600 }}>cannot be undone</span>.
+            </p>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                disabled={isDeletingCustomer}
+                onClick={() => setDeletingCustomerTarget(null)}
+                className="btn-secondary"
+                style={{ opacity: isDeletingCustomer ? 0.5 : 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingCustomer}
+                onClick={handleDeleteCustomer}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: '#e11d48',
+                  color: '#fff',
+                  border: 'none',
+                  padding: '9px 18px',
+                  borderRadius: '10px',
+                  fontSize: '0.88rem',
+                  fontWeight: 600,
+                  cursor: isDeletingCustomer ? 'not-allowed' : 'pointer',
+                  opacity: isDeletingCustomer ? 0.7 : 1,
+                  boxShadow: '0 4px 14px rgba(225, 29, 72, 0.4)',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {isDeletingCustomer ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    <span>Delete Customer</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* ============================================================== */}
+      {/* MODAL: VIEW REWARD DETAILS & GOVERNANCE */}
+      {/* ============================================================== */}
+      {viewingReward && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 300,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+          onClick={() => setViewingReward(null)}
+        >
+          <div
+            className="glass-panel"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: '520px',
+              borderRadius: '24px',
+              padding: '28px',
+              border: '1px solid rgba(245, 158, 11, 0.25)',
+              boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 30px rgba(245, 158, 11, 0.08)',
+              position: 'relative',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+          >
+            {/* Header: Badge & Status & Close */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    color: 'var(--accent-gold)',
+                    background: 'rgba(245, 158, 11, 0.12)',
+                    padding: '4px 10px',
+                    borderRadius: '20px',
+                    border: '1px solid rgba(245, 158, 11, 0.25)',
+                  }}
+                >
+                  Reward Details & Policy
+                </span>
+                <span
+                  className={`badge ${viewingReward.status === 'Active'
+                      ? 'badge-green'
+                      : viewingReward.status === 'Expired'
+                        ? 'badge-gray'
+                        : 'badge-rose'
+                    }`}
+                  style={{ fontSize: '0.72rem' }}
+                >
+                  ● {viewingReward.status === 'Active' ? 'Active' : viewingReward.status === 'Expired' ? 'Expired' : 'Deactivated / Suspended'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingReward(null)}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-card)',
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Hero: Icon, Reward Name & Cafe */}
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div
+                style={{
+                  width: '60px',
+                  height: '60px',
+                  borderRadius: '16px',
+                  background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(234, 88, 12, 0.2) 100%)',
+                  border: '1px solid rgba(245, 158, 11, 0.35)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--accent-gold)',
+                  marginBottom: '10px',
+                }}
+              >
+                <Gift size={28} />
+              </div>
+              <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#fff', margin: '0 0 6px 0' }}>
+                {viewingReward.name}
+              </h3>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                <span
+                  style={{
+                    fontSize: '0.78rem',
+                    color: 'var(--text-secondary)',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    padding: '3px 10px',
+                    borderRadius: '6px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    fontWeight: 600,
+                  }}
+                >
+                  <Coffee size={13} color="var(--accent-gold)" />
+                  {viewingReward.cafe}
+                </span>
+                <span className={`badge ${viewingReward.type === 'FREE_ITEM' ? 'badge-emerald' : 'badge-indigo'}`} style={{ fontSize: '0.72rem' }}>
+                  {viewingReward.typeLabel || viewingReward.type}
+                </span>
+              </div>
+            </div>
+
+            {/* 4 Key Metrics: Points, Value, Redeemed, Status */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: '18px' }}>
+              {/* Points Required */}
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(245, 158, 11, 0.06)',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(245, 158, 11, 0.18)',
+                }}
+              >
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Points Required
+                </span>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-gold)', marginTop: '2px' }}>
+                  {viewingReward.points} <span style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', fontWeight: 500 }}>pts</span>
+                </div>
+              </div>
+
+              {/* Reward Value */}
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(16, 185, 129, 0.06)',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(16, 185, 129, 0.18)',
+                }}
+              >
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Reward Value
+                </span>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#10b981', marginTop: '2px' }}>
+                  {viewingReward.value || '₹200'}
+                </div>
+              </div>
+
+              {/* Total Redemptions */}
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(56, 189, 248, 0.06)',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(56, 189, 248, 0.18)',
+                }}
+              >
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Total Redemptions
+                </span>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#38bdf8', marginTop: '2px' }}>
+                  {viewingReward.redeemed} <span style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', fontWeight: 500 }}>claims</span>
+                </div>
+              </div>
+
+              {/* Current Status */}
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                }}
+              >
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Current Status
+                </span>
+                <div
+                  style={{
+                    fontSize: '1.15rem',
+                    fontWeight: 800,
+                    marginTop: '4px',
+                    color: viewingReward.status === 'Active' ? '#10b981' : viewingReward.status === 'Expired' ? '#94a3b8' : '#fb7185',
+                  }}
+                >
+                  {viewingReward.status}
+                </div>
+              </div>
+            </div>
+
+            {/* Details Breakdown List */}
             <div
               style={{
-                position: 'fixed',
-                inset: 0,
-                background: 'rgba(0, 0, 0, 0.78)',
-                backdropFilter: 'blur(8px)',
-                zIndex: 300,
+                background: 'rgba(255, 255, 255, 0.02)',
+                borderRadius: '16px',
+                border: '1px solid rgba(255, 255, 255, 0.06)',
+                padding: '14px 16px',
                 display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '20px',
+                flexDirection: 'column',
+                gap: '12px',
+                marginBottom: '20px',
               }}
             >
-              <div
-                className="glass-panel"
+              {/* Cafe Name */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Cafe Name</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#fff' }}>
+                  {viewingReward.cafe}
+                </span>
+              </div>
+
+              <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.04)' }} />
+
+              {/* Created By (Cafe Admin) */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Created By</span>
+                <div style={{ textAlign: 'right' }}>
+                  <span
+                    style={{
+                      fontSize: '0.82rem',
+                      fontWeight: 700,
+                      color: 'var(--accent-gold)',
+                      background: 'rgba(245, 158, 11, 0.1)',
+                      padding: '3px 8px',
+                      borderRadius: '6px',
+                      border: '1px solid rgba(245, 158, 11, 0.2)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                    }}
+                  >
+                    <Users size={12} />
+                    {viewingReward.createdBy || 'Cafe Admin'}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.04)' }} />
+
+              {/* Created Date and Expiry */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Created Date</span>
+                <span style={{ fontSize: '0.82rem', color: '#cbd5e1' }}>
+                  {viewingReward.createdDate
+                    ? new Date(viewingReward.createdDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                    : 'N/A'}
+                </span>
+              </div>
+
+              <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.04)' }} />
+
+              {/* Expiry Date */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Expiry Date</span>
+                <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f1f5f9' }}>
+                  {new Date(viewingReward.expiry).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                </span>
+              </div>
+
+              <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.04)' }} />
+
+              {/* Description & Terms */}
+              <div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '4px' }}>
+                  Description & Terms
+                </div>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  {viewingReward.description || 'Complimentary loyalty perk for frequent customers.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Super Admin Actions: Activate / Deactivate + Close */}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => handleToggleRewardStatus(viewingReward.id)}
                 style={{
-                  width: '100%',
-                  maxWidth: '480px',
-                  padding: '32px',
-                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
-                  borderRadius: '24px',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  border: 'none',
+                  transition: 'all 0.2s',
+                  background:
+                    viewingReward.status === 'Active'
+                      ? 'rgba(244, 63, 94, 0.15)'
+                      : 'rgba(16, 185, 129, 0.15)',
+                  color: viewingReward.status === 'Active' ? '#fb7185' : '#10b981',
+                  borderWidth: '1px',
+                  borderStyle: 'solid',
+                  borderColor:
+                    viewingReward.status === 'Active'
+                      ? 'rgba(244, 63, 94, 0.4)'
+                      : 'rgba(16, 185, 129, 0.4)',
+                }}
+              >
+                <Power size={14} />
+                <span>{viewingReward.status === 'Active' ? 'Deactivate Reward' : 'Activate Reward'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewingReward(null)}
+                className="btn-secondary"
+                style={{ fontSize: '0.82rem' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* ============================================================== */}
+      {/* MODAL: VIEW REDEMPTION RECEIPT */}
+      {/* ============================================================== */}
+      {viewingRedemption && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 300,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+          onClick={() => setViewingRedemption(null)}
+        >
+          <div
+            className="glass-panel"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: '460px',
+              borderRadius: '24px',
+              padding: '28px',
+              border: '1px solid rgba(245, 158, 11, 0.25)',
+              boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 30px rgba(245, 158, 11, 0.08)',
+              position: 'relative',
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <span
+                style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  color: 'var(--accent-gold)',
+                  background: 'rgba(245, 158, 11, 0.12)',
+                  padding: '4px 10px',
+                  borderRadius: '20px',
                   border: '1px solid rgba(245, 158, 11, 0.25)',
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <div
-                      style={{
-                        width: '42px',
-                        height: '42px',
-                        borderRadius: '12px',
-                        background: 'rgba(245, 158, 11, 0.15)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: 'var(--accent-gold)',
-                      }}
-                    >
-                      <Edit size={20} />
-                    </div>
-                    <div>
-                      <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>Edit Customer</h3>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        Update profile info for {editingCustomer.name}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setEditingCustomer(null)}
-                    style={{ color: 'var(--text-muted)', background: 'transparent', cursor: 'pointer' }}
-                  >
-                    <X size={20} />
-                  </button>
-                </div>
-
-                <form onSubmit={handleUpdateCustomer}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                        Full Name *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        className="input-field"
-                        value={customerEditForm.name}
-                        onChange={(e) => setCustomerEditForm({ ...customerEditForm, name: e.target.value })}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                        Phone Number *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        className="input-field"
-                        value={customerEditForm.phone}
-                        onChange={(e) => setCustomerEditForm({ ...customerEditForm, phone: e.target.value })}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                        Email Address
-                      </label>
-                      <input
-                        type="email"
-                        className="input-field"
-                        placeholder="name@example.com (optional)"
-                        value={customerEditForm.email}
-                        onChange={(e) => setCustomerEditForm({ ...customerEditForm, email: e.target.value })}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                        Account Status
-                      </label>
-                      <select
-                        className="input-field"
-                        value={customerEditForm.isActive ? 'active' : 'inactive'}
-                        onChange={(e) => setCustomerEditForm({ ...customerEditForm, isActive: e.target.value === 'active' })}
-                      >
-                        <option value="active">Active (QR Pass & Points Enabled)</option>
-                        <option value="inactive">Inactive / Suspended</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                    <button
-                      type="button"
-                      disabled={isUpdatingCustomer}
-                      onClick={() => setEditingCustomer(null)}
-                      className="btn-secondary"
-                      style={{ opacity: isUpdatingCustomer ? 0.5 : 1 }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isUpdatingCustomer}
-                      className="btn-primary"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        opacity: isUpdatingCustomer ? 0.7 : 1,
-                      }}
-                    >
-                      {isUpdatingCustomer ? (
-                        <>
-                          <Loader2 size={16} className="animate-spin" />
-                          <span>Saving...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Check size={16} />
-                          <span>Save Changes</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* ============================================================== */}
-          {/* MODAL: IN-APP DELETE CUSTOMER CONFIRMATION */}
-          {/* ============================================================== */}
-          {deletingCustomerTarget && (
-            <div
-              style={{
-                position: 'fixed',
-                inset: 0,
-                background: 'rgba(0, 0, 0, 0.8)',
-                backdropFilter: 'blur(8px)',
-                zIndex: 300,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '20px',
-              }}
-            >
-              <div
-                className="glass-panel"
+                Redemption Receipt
+              </span>
+              <button
+                type="button"
+                onClick={() => setViewingRedemption(null)}
                 style={{
-                  width: '100%',
-                  maxWidth: '440px',
-                  padding: '28px',
-                  border: '1px solid rgba(244, 63, 94, 0.3)',
-                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
-                  borderRadius: '20px',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-card)',
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
-                  <div
-                    style={{
-                      width: '44px',
-                      height: '44px',
-                      borderRadius: '12px',
-                      background: 'rgba(244, 63, 94, 0.12)',
-                      border: '1px solid rgba(244, 63, 94, 0.3)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#fb7185',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <AlertTriangle size={22} />
-                  </div>
-                  <div>
-                    <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#fff' }}>Delete Customer</h3>
-                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>Confirm permanent removal</p>
-                  </div>
-                </div>
+                <X size={18} />
+              </button>
+            </div>
 
-                <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '22px' }}>
-                  Are you sure you want to permanently delete customer{' '}
-                  <strong style={{ color: '#fff' }}>&quot;{deletingCustomerTarget.name}&quot;</strong>?
-                  All associated visits, scan logs, loyalty progress, and rewards will be deleted. This action{' '}
-                  <span style={{ color: '#fb7185', fontWeight: 600 }}>cannot be undone</span>.
-                </p>
-
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    disabled={isDeletingCustomer}
-                    onClick={() => setDeletingCustomerTarget(null)}
-                    className="btn-secondary"
-                    style={{ opacity: isDeletingCustomer ? 0.5 : 1 }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isDeletingCustomer}
-                    onClick={handleDeleteCustomer}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      background: '#e11d48',
-                      color: '#fff',
-                      border: 'none',
-                      padding: '9px 18px',
-                      borderRadius: '10px',
-                      fontSize: '0.88rem',
-                      fontWeight: 600,
-                      cursor: isDeletingCustomer ? 'not-allowed' : 'pointer',
-                      opacity: isDeletingCustomer ? 0.7 : 1,
-                      boxShadow: '0 4px 14px rgba(225, 29, 72, 0.4)',
-                      transition: 'all 0.2s',
-                    }}
-                  >
-                    {isDeletingCustomer ? (
-                      <>
-                        <Loader2 size={16} className="animate-spin" />
-                        <span>Deleting...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Trash2 size={16} />
-                        <span>Delete Customer</span>
-                      </>
-                    )}
-                  </button>
-                </div>
+            {/* Status & Code Hero */}
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div
+                style={{
+                  width: '60px',
+                  height: '60px',
+                  borderRadius: '50%',
+                  background:
+                    viewingRedemption.status === 'Redeemed'
+                      ? 'rgba(16, 185, 129, 0.15)'
+                      : viewingRedemption.status === 'Pending'
+                        ? 'rgba(245, 158, 11, 0.15)'
+                        : 'rgba(244, 63, 94, 0.15)',
+                  border: `2px solid ${viewingRedemption.status === 'Redeemed'
+                      ? '#10b981'
+                      : viewingRedemption.status === 'Pending'
+                        ? 'var(--accent-gold)'
+                        : '#fb7185'
+                    }`,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color:
+                    viewingRedemption.status === 'Redeemed'
+                      ? '#10b981'
+                      : viewingRedemption.status === 'Pending'
+                        ? 'var(--accent-gold)'
+                        : '#fb7185',
+                  marginBottom: '10px',
+                }}
+              >
+                <CheckCircle size={30} />
+              </div>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', margin: '0 0 4px 0' }}>
+                {viewingRedemption.reward}
+              </h3>
+              <div style={{ fontFamily: 'monospace', fontSize: '0.9rem', color: 'var(--accent-gold)', fontWeight: 700, letterSpacing: '0.08em' }}>
+                {viewingRedemption.code}
               </div>
             </div>
-          )}
+
+            {/* Details Card */}
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+                borderRadius: '16px',
+                border: '1px solid rgba(255, 255, 255, 0.06)',
+                padding: '16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                marginBottom: '20px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Customer</span>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#fff' }}>{viewingRedemption.customer}</div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{viewingRedemption.phone}</div>
+                </div>
+              </div>
+
+              <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.05)' }} />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Cafe Location</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  {viewingRedemption.cafe}
+                </span>
+              </div>
+
+              <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.05)' }} />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Points Deducted</span>
+                <span style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--accent-gold)' }}>
+                  {viewingRedemption.points} pts
+                </span>
+              </div>
+
+              <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.05)' }} />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Redeemed At</span>
+                <span style={{ fontSize: '0.82rem', color: '#cbd5e1' }}>{viewingRedemption.date}</span>
+              </div>
+
+              <div style={{ height: '1px', background: 'rgba(255, 255, 255, 0.05)' }} />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Redemption Status</span>
+                <span
+                  className={`badge ${viewingRedemption.status === 'Redeemed'
+                      ? 'badge-emerald'
+                      : viewingRedemption.status === 'Pending'
+                        ? 'badge-gold'
+                        : 'badge-rose'
+                    }`}
+                  style={{ fontSize: '0.72rem' }}
+                >
+                  ● {viewingRedemption.status}
+                </span>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              {viewingRedemption.status === 'Pending' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRedemptionsList((prev) =>
+                      prev.map((item) =>
+                        item.id === viewingRedemption.id ? { ...item, status: 'Redeemed' } : item
+                      )
+                    );
+                    toast(`Redemption marked as Redeemed!`, 'success');
+                    setViewingRedemption(null);
+                  }}
+                  className="btn-primary"
+                  style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <CheckCircle size={14} />
+                  <span>Mark as Redeemed</span>
+                </button>
+              )}
+              <button type="button" onClick={() => setViewingRedemption(null)} className="btn-secondary" style={{ fontSize: '0.82rem' }}>
+                Close
+              </button>
+            </div>
+          </div>
         </div>
-      );
+      )}
+    </div>
+  );
 }
