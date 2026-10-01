@@ -43,6 +43,7 @@ export interface ClientAdmin {
   name: string;
   email: string;
   phone?: string | null;
+  role?: string;
   isActive: boolean;
   lastLoginAt?: string | null;
   client?: Client;

@@ -94,6 +94,7 @@ export default function SuperAdminPage() {
   const [clientsList, setClientsList] = useState<Client[]>([]);
   const [rewardsList, setRewardsList] = useState<CustomerReward[]>([]);
   const [whatsappLogs, setWhatsappLogs] = useState<WhatsAppLog[]>([]);
+  const [customersList, setCustomersList] = useState<any[]>([]);
 
   // 1. Dashboard Chart State
   const [chartTimeline, setChartTimeline] = useState<'7D' | '30D' | '3M' | '1Y'>('30D');
@@ -162,9 +163,56 @@ export default function SuperAdminPage() {
   } | null>(null);
   const [isDeletingAdmin, setIsDeletingAdmin] = useState(false);
 
+  // Cafe Admins Filter States
+  const [adminSearchQuery, setAdminSearchQuery] = useState('');
+  const [adminRoleFilter, setAdminRoleFilter] = useState<'all' | 'Admin' | 'Manager'>('all');
+  const [adminStatusFilter, setAdminStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [adminLastLoginFilter, setAdminLastLoginFilter] = useState<'all' | 'today' | '7d' | '30d' | 'never'>('all');
+  const [adminCreatedDateFilter, setAdminCreatedDateFilter] = useState<'all' | 'today' | '7d' | 'month' | 'custom'>('all');
+  const [adminStartDate, setAdminStartDate] = useState('');
+  const [adminEndDate, setAdminEndDate] = useState('');
+  const [adminRolesMap, setAdminRolesMap] = useState<Record<string, 'Admin' | 'Manager'>>({});
+
+  const hasActiveAdminFilters = Boolean(
+    adminSearchQuery ||
+    adminRoleFilter !== 'all' ||
+    adminStatusFilter !== 'all' ||
+    adminLastLoginFilter !== 'all' ||
+    adminCreatedDateFilter !== 'all' ||
+    adminStartDate ||
+    adminEndDate
+  );
+
+  const resetAdminFilters = () => {
+    setAdminSearchQuery('');
+    setAdminRoleFilter('all');
+    setAdminStatusFilter('all');
+    setAdminLastLoginFilter('all');
+    setAdminCreatedDateFilter('all');
+    setAdminStartDate('');
+    setAdminEndDate('');
+  };
+
   // 5. Customers CRM State & Profile Drawer
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [selectedCustomerProfile, setSelectedCustomerProfile] = useState<any | null>(null);
+
+  // Customer Edit & Delete States
+  const [editingCustomer, setEditingCustomer] = useState<any | null>(null);
+  const [customerEditForm, setCustomerEditForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    isActive: true,
+  });
+  const [isUpdatingCustomer, setIsUpdatingCustomer] = useState(false);
+  const [deletingCustomerTarget, setDeletingCustomerTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState(false);
+
+  // Customer Date Filter State
+  const [customerDateRange, setCustomerDateRange] = useState<'all' | 'today' | '7d' | '30d' | 'custom'>('all');
+  const [customerStartDate, setCustomerStartDate] = useState('');
+  const [customerEndDate, setCustomerEndDate] = useState('');
 
   // 6. Rewards Subtab State ('rewards' | 'redemptions')
   const [rewardsSubtab, setRewardsSubtab] = useState<'rewards' | 'redemptions'>('rewards');
@@ -250,17 +298,19 @@ export default function SuperAdminPage() {
   const loadMasterData = async () => {
     try {
       setLoading(true);
-      const [stats, clientsRes, rewardsRes, whatsappRes] = await Promise.all([
+      const [stats, clientsRes, rewardsRes, whatsappRes, customersRes] = await Promise.all([
         superAdminApi.dashboard(),
         superAdminApi.listClients(),
         superAdminApi.listRewards(),
         superAdminApi.listWhatsAppLogs(),
+        superAdminApi.listCustomers(),
       ]);
 
       setDashboardStats(stats);
       setClientsList(clientsRes.clients || []);
       setRewardsList(rewardsRes.rewards || []);
       setWhatsappLogs(whatsappRes.logs || []);
+      setCustomersList(customersRes.customers || []);
 
       // If viewing cafe details, refresh its activity
       if (selectedCafeDetail) {
@@ -446,12 +496,18 @@ export default function SuperAdminPage() {
     }
 
     try {
-      await superAdminApi.createClientAdmin(targetClientId, {
+      const createdRes: any = await superAdminApi.createClientAdmin(targetClientId, {
         name: adminForm.name,
         email: adminForm.email,
         phone: adminForm.phone || undefined,
         password: adminForm.password,
       });
+
+      const newId = createdRes?.clientAdmin?.id || createdRes?.admin?.id || createdRes?.id;
+      if (newId && adminForm.role) {
+        setAdminRolesMap((prev) => ({ ...prev, [newId]: (adminForm.role as any) || 'Admin' }));
+      }
+
       toast(`Admin "${adminForm.name}" created successfully!`, 'success');
       setShowAddAdminDrawer(false);
       setAdminForm({
@@ -476,7 +532,7 @@ export default function SuperAdminPage() {
       name: admin.name || '',
       email: admin.email || '',
       phone: admin.phone || '',
-      role: admin.role || 'Admin',
+      role: adminRolesMap[admin.id] || admin.role || 'Admin',
       password: '',
     });
   };
@@ -503,6 +559,13 @@ export default function SuperAdminPage() {
         editingAdminTarget.adminId,
         payload
       );
+
+      if (editingAdminTarget.role) {
+        setAdminRolesMap((prev) => ({
+          ...prev,
+          [editingAdminTarget.adminId]: (editingAdminTarget.role as any) || 'Admin',
+        }));
+      }
 
       toast(`Admin "${editingAdminTarget.name}" details updated!`, 'success');
       setEditingAdminTarget(null);
@@ -534,6 +597,66 @@ export default function SuperAdminPage() {
       toast(err.message || 'Failed to delete admin', 'error');
     } finally {
       setIsDeletingAdmin(false);
+    }
+  };
+
+  // Customer Management Handlers
+  const openEditCustomerModal = (customer: any) => {
+    setEditingCustomer(customer);
+    setCustomerEditForm({
+      name: customer.name || '',
+      email: customer.email || '',
+      phone: customer.phone || '',
+      isActive: customer.isActive !== false,
+    });
+  };
+
+  const handleUpdateCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCustomer) return;
+    if (!customerEditForm.name.trim() || !customerEditForm.phone.trim()) {
+      toast('Customer name and phone are required', 'error');
+      return;
+    }
+
+    try {
+      setIsUpdatingCustomer(true);
+      const res = await superAdminApi.updateCustomer(editingCustomer.id, {
+        name: customerEditForm.name.trim(),
+        email: customerEditForm.email.trim() || undefined,
+        phone: customerEditForm.phone.trim(),
+        isActive: customerEditForm.isActive,
+      });
+
+      setCustomersList((prev) =>
+        prev.map((c) =>
+          c.id === editingCustomer.id
+            ? { ...c, ...res.customer, name: customerEditForm.name.trim(), email: customerEditForm.email.trim(), phone: customerEditForm.phone.trim(), isActive: customerEditForm.isActive }
+            : c
+        )
+      );
+      toast('Customer details updated successfully!', 'success');
+      setEditingCustomer(null);
+    } catch (err: any) {
+      toast(err.message || 'Failed to update customer', 'error');
+    } finally {
+      setIsUpdatingCustomer(false);
+    }
+  };
+
+  const handleDeleteCustomer = async () => {
+    if (!deletingCustomerTarget) return;
+
+    try {
+      setIsDeletingCustomer(true);
+      await superAdminApi.deleteCustomer(deletingCustomerTarget.id);
+      setCustomersList((prev) => prev.filter((c) => c.id !== deletingCustomerTarget.id));
+      toast(`Customer "${deletingCustomerTarget.name}" deleted successfully.`, 'success');
+      setDeletingCustomerTarget(null);
+    } catch (err: any) {
+      toast(err.message || 'Failed to delete customer', 'error');
+    } finally {
+      setIsDeletingCustomer(false);
     }
   };
 
@@ -1109,9 +1232,9 @@ export default function SuperAdminPage() {
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border-card)', color: 'var(--text-muted)' }}>
                         <th style={{ padding: '12px 10px' }}>Cafe</th>
-                        <th style={{ padding: '12px 10px' }}>Plan</th>
-                        <th style={{ padding: '12px 10px' }}>Status</th>
-                        <th style={{ padding: '12px 10px', textAlign: 'right' }}>Actions</th>
+                        <th style={{ padding: '12px 10px', width: '90px', whiteSpace: 'nowrap' }}>Plan</th>
+                        <th style={{ padding: '12px 10px', width: '120px', whiteSpace: 'nowrap' }}>Status</th>
+                        <th style={{ padding: '12px 10px', width: '130px', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1121,17 +1244,17 @@ export default function SuperAdminPage() {
                             <div style={{ fontWeight: 700, color: '#fff' }}>{client.name}</div>
                             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{client.email}</div>
                           </td>
-                          <td style={{ padding: '12px 10px' }}>
+                          <td style={{ padding: '12px 10px', width: '90px', whiteSpace: 'nowrap' }}>
                             <span className="badge badge-indigo" style={{ fontSize: '0.65rem' }}>
                               {client.subscriptionPlan.toUpperCase()}
                             </span>
                           </td>
-                          <td style={{ padding: '12px 10px' }}>
+                          <td style={{ padding: '12px 10px', width: '120px', whiteSpace: 'nowrap' }}>
                             <span className={`badge ${client.isActive ? 'badge-emerald' : 'badge-gold'}`} style={{ fontSize: '0.65rem' }}>
                               ● {client.isActive ? 'Active' : 'Deactivated'}
                             </span>
                           </td>
-                          <td style={{ padding: '12px 10px', textAlign: 'right' }}>
+                          <td style={{ padding: '12px 10px', width: '130px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                             <div style={{ display: 'inline-flex', gap: '6px' }}>
                               <button
                                 onClick={() => handleOpenCafeDetail(client)}
@@ -1293,11 +1416,11 @@ export default function SuperAdminPage() {
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.12)', color: '#cbd5e1', fontSize: '0.8rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
                     <th style={{ padding: '16px 20px' }}>Cafe</th>
-                    <th style={{ padding: '16px 20px' }}>Plan</th>
-                    <th style={{ padding: '16px 20px' }}>Customers</th>
-                    <th style={{ padding: '16px 20px' }}>Visits</th>
-                    <th style={{ padding: '16px 20px' }}>Status</th>
-                    <th style={{ padding: '16px 20px', textAlign: 'right' }}>Actions</th>
+                    <th style={{ padding: '16px 20px', width: '100px', whiteSpace: 'nowrap' }}>Plan</th>
+                    <th style={{ padding: '16px 20px', width: '110px', whiteSpace: 'nowrap' }}>Customers</th>
+                    <th style={{ padding: '16px 20px', width: '100px', whiteSpace: 'nowrap' }}>Visits</th>
+                    <th style={{ padding: '16px 20px', width: '130px', whiteSpace: 'nowrap' }}>Status</th>
+                    <th style={{ padding: '16px 20px', width: '190px', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1328,21 +1451,21 @@ export default function SuperAdminPage() {
                           </div>
                         </div>
                       </td>
-                      <td style={{ padding: '16px 20px' }}>
+                      <td style={{ padding: '16px 20px', width: '100px', whiteSpace: 'nowrap' }}>
                         <span className="badge badge-indigo">{client.subscriptionPlan.toUpperCase()}</span>
                       </td>
-                      <td style={{ padding: '16px 20px', fontWeight: 700, color: '#f8fafc' }}>
+                      <td style={{ padding: '16px 20px', width: '110px', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap' }}>
                         {client._count?.customers ?? 0}
                       </td>
-                      <td style={{ padding: '16px 20px', fontWeight: 700, color: '#f8fafc' }}>
+                      <td style={{ padding: '16px 20px', width: '100px', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap' }}>
                         {client._count?.visitLogs ?? 0}
                       </td>
-                      <td style={{ padding: '16px 20px' }}>
+                      <td style={{ padding: '16px 20px', width: '130px', whiteSpace: 'nowrap' }}>
                         <span className={`badge ${client.isActive ? 'badge-emerald' : 'badge-gold'}`}>
                           ● {client.isActive ? 'Active' : 'Deactivated'}
                         </span>
                       </td>
-                      <td style={{ padding: '16px 20px', textAlign: 'right' }}>
+                      <td style={{ padding: '16px 20px', width: '190px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'inline-flex', gap: '8px' }}>
                           <button
                             onClick={() => handleOpenCafeDetail(client)}
@@ -1669,16 +1792,210 @@ export default function SuperAdminPage() {
               </button>
             </div>
 
+            {/* Cafe Admins Filter Controls */}
+            <div
+              className="glass-panel"
+              style={{
+                padding: '16px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                borderRadius: '16px',
+                border: '1px solid var(--border-card)',
+              }}
+            >
+              {/* Row 1: Search + 4 Select Filters */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                  gap: '12px',
+                  alignItems: 'center',
+                }}
+              >
+                {/* 1. Real-time Search */}
+                <div style={{ position: 'relative' }}>
+                  <Search
+                    size={14}
+                    style={{
+                      position: 'absolute',
+                      left: '12px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      color: 'var(--text-muted)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Search name, email, cafe..."
+                    value={adminSearchQuery}
+                    onChange={(e) => setAdminSearchQuery(e.target.value)}
+                    className="input-field"
+                    style={{
+                      paddingLeft: '34px',
+                      paddingRight: adminSearchQuery ? '32px' : '12px',
+                      fontSize: '0.8rem',
+                      height: '38px',
+                    }}
+                  />
+                  {adminSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setAdminSearchQuery('')}
+                      style={{
+                        position: 'absolute',
+                        right: '10px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--text-muted)',
+                        cursor: 'pointer',
+                        padding: 0,
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {/* 2. Role Filter */}
+                <div>
+                  <select
+                    className="input-field"
+                    value={adminRoleFilter}
+                    onChange={(e) => setAdminRoleFilter(e.target.value as any)}
+                    style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                  >
+                    <option value="all">Role: All Roles</option>
+                    <option value="Admin">Role: Admin</option>
+                    <option value="Manager">Role: Manager</option>
+                  </select>
+                </div>
+
+                {/* 3. Status Filter */}
+                <div>
+                  <select
+                    className="input-field"
+                    value={adminStatusFilter}
+                    onChange={(e) => setAdminStatusFilter(e.target.value as any)}
+                    style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                  >
+                    <option value="all">Status: All</option>
+                    <option value="active">Status: Active</option>
+                    <option value="inactive">Status: Inactive</option>
+                  </select>
+                </div>
+
+                {/* 4. Last Login Filter */}
+                <div>
+                  <select
+                    className="input-field"
+                    value={adminLastLoginFilter}
+                    onChange={(e) => setAdminLastLoginFilter(e.target.value as any)}
+                    style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                  >
+                    <option value="all">Last Login: All</option>
+                    <option value="today">Last Login: Today</option>
+                    <option value="7d">Last Login: Last 7 Days</option>
+                    <option value="30d">Last Login: Last 30 Days</option>
+                    <option value="never">Last Login: Never Logged In</option>
+                  </select>
+                </div>
+
+                {/* 5. Created Date Filter */}
+                <div>
+                  <select
+                    className="input-field"
+                    value={adminCreatedDateFilter}
+                    onChange={(e) => setAdminCreatedDateFilter(e.target.value as any)}
+                    style={{ fontSize: '0.8rem', height: '38px', cursor: 'pointer' }}
+                  >
+                    <option value="all">Created: All Time</option>
+                    <option value="today">Created: Today</option>
+                    <option value="7d">Created: Last 7 Days</option>
+                    <option value="month">Created: This Month</option>
+                    <option value="custom">Created: Custom Range</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Row 2: Custom Date Pickers (when custom selected) & Reset Button */}
+              {(adminCreatedDateFilter === 'custom' || hasActiveAdminFilters) && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    paddingTop: '8px',
+                    borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+                  }}
+                >
+                  {adminCreatedDateFilter === 'custom' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--accent-gold)', fontWeight: 600 }}>
+                        Custom Range:
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>From:</span>
+                        <input
+                          type="date"
+                          className="input-field"
+                          style={{ padding: '4px 8px', fontSize: '0.78rem', width: 'auto', height: '32px' }}
+                          value={adminStartDate}
+                          onChange={(e) => setAdminStartDate(e.target.value)}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>To:</span>
+                        <input
+                          type="date"
+                          className="input-field"
+                          style={{ padding: '4px 8px', fontSize: '0.78rem', width: 'auto', height: '32px' }}
+                          value={adminEndDate}
+                          onChange={(e) => setAdminEndDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  ) : <div />}
+
+                  {hasActiveAdminFilters && (
+                    <button
+                      type="button"
+                      onClick={resetAdminFilters}
+                      className="btn-secondary"
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.75rem',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        color: '#fb7185',
+                        borderColor: 'rgba(244, 63, 94, 0.3)',
+                      }}
+                    >
+                      <RefreshCw size={12} />
+                      <span>Reset Filters</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="glass-panel" style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
+              <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.12)', color: '#cbd5e1', fontSize: '0.76rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                    <th style={{ padding: '10px 14px' }}>Admin</th>
-                    <th style={{ padding: '10px 14px' }}>Cafe Source</th>
-                    <th style={{ padding: '10px 14px' }}>Role</th>
-                    <th style={{ padding: '10px 14px' }}>Last Login</th>
-                    <th style={{ padding: '10px 14px' }}>Status</th>
-                    <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
+                    <th style={{ padding: '10px 14px', width: '22%' }}>Admin</th>
+                    <th style={{ padding: '10px 14px', width: '18%' }}>Cafe Source</th>
+                    <th style={{ padding: '10px 14px', width: '11%', whiteSpace: 'nowrap' }}>Role</th>
+                    <th style={{ padding: '10px 14px', width: '13%', whiteSpace: 'nowrap' }}>Created Date</th>
+                    <th style={{ padding: '10px 14px', width: '13%', whiteSpace: 'nowrap' }}>Last Login</th>
+                    <th style={{ padding: '10px 14px', width: '11%', whiteSpace: 'nowrap' }}>Status</th>
+                    <th style={{ padding: '10px 14px', width: '12%', textAlign: 'center', whiteSpace: 'nowrap' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1691,36 +2008,140 @@ export default function SuperAdminPage() {
                         email: adm.email,
                         phone: adm.phone,
                         cafe: client.name,
-                        role: 'Admin',
-                        login: adm.lastLoginAt ? new Date(adm.lastLoginAt).toLocaleDateString() : 'Active',
+                        role: adminRolesMap[adm.id] || adm.role || 'Admin',
+                        login: adm.lastLoginAt
+                          ? new Date(adm.lastLoginAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                          : 'Never',
+                        lastLoginAt: adm.lastLoginAt ? new Date(adm.lastLoginAt) : null,
+                        createdStr: adm.createdAt
+                          ? new Date(adm.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                          : '—',
+                        createdAt: adm.createdAt ? new Date(adm.createdAt) : null,
                         status: adm.isActive ?? true,
                       }))
                     );
 
-                    const listToRender = realAdmins.length > 0 ? realAdmins : [
-                      { id: '1', clientId: clientsList[0]?.id || '', name: 'Rahul Verma', email: 'rahul@triocafe.com', phone: '', cafe: 'Trio Cafe', role: 'Admin', login: '2 min ago', status: true },
-                      { id: '2', clientId: clientsList[0]?.id || '', name: 'Priya Sharma', email: 'priya@aromacafe.com', phone: '', cafe: 'Cafe Aroma', role: 'Manager', login: 'Yesterday', status: true },
-                      { id: '3', clientId: clientsList[0]?.id || '', name: 'Amit Desai', email: 'amit@dailygrind.com', phone: '', cafe: 'The Daily Grind', role: 'Admin', login: '3 days ago', status: true },
-                    ];
+                    const filteredAdmins = realAdmins.filter((adm) => {
+                      // 1. Text Search (Name, Email, Phone, Cafe)
+                      if (adminSearchQuery.trim()) {
+                        const q = adminSearchQuery.toLowerCase();
+                        const matchName = adm.name?.toLowerCase().includes(q);
+                        const matchEmail = adm.email?.toLowerCase().includes(q);
+                        const matchPhone = adm.phone?.includes(q);
+                        const matchCafe = adm.cafe?.toLowerCase().includes(q);
+                        if (!matchName && !matchEmail && !matchPhone && !matchCafe) return false;
+                      }
 
-                    return listToRender.map((adm) => (
+                      // 2. Role Filter: 'all' | 'Admin' | 'Manager'
+                      if (adminRoleFilter !== 'all') {
+                        if (adm.role !== adminRoleFilter) return false;
+                      }
+
+                      // 3. Status Filter: 'all' | 'active' | 'inactive'
+                      if (adminStatusFilter !== 'all') {
+                        if (adminStatusFilter === 'active' && !adm.status) return false;
+                        if (adminStatusFilter === 'inactive' && adm.status) return false;
+                      }
+
+                      // 4. Last Login Filter: 'all' | 'today' | '7d' | '30d' | 'never'
+                      if (adminLastLoginFilter !== 'all') {
+                        if (adminLastLoginFilter === 'never') {
+                          if (adm.lastLoginAt) return false;
+                        } else {
+                          if (!adm.lastLoginAt) return false;
+                          const loginDate = adm.lastLoginAt;
+                          const now = new Date();
+                          if (adminLastLoginFilter === 'today') {
+                            if (loginDate.toDateString() !== now.toDateString()) return false;
+                          } else if (adminLastLoginFilter === '7d') {
+                            const past7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+                            if (loginDate < past7) return false;
+                          } else if (adminLastLoginFilter === '30d') {
+                            const past30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+                            if (loginDate < past30) return false;
+                          }
+                        }
+                      }
+
+                      // 5. Created Date Filter: 'all' | 'today' | '7d' | 'month' | 'custom'
+                      if (adminCreatedDateFilter !== 'all') {
+                        if (!adm.createdAt) return false;
+                        const createdDate = adm.createdAt;
+                        const now = new Date();
+                        if (adminCreatedDateFilter === 'today') {
+                          if (createdDate.toDateString() !== now.toDateString()) return false;
+                        } else if (adminCreatedDateFilter === '7d') {
+                          const past7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+                          if (createdDate < past7) return false;
+                        } else if (adminCreatedDateFilter === 'month') {
+                          if (
+                            createdDate.getMonth() !== now.getMonth() ||
+                            createdDate.getFullYear() !== now.getFullYear()
+                          ) {
+                            return false;
+                          }
+                        } else if (adminCreatedDateFilter === 'custom') {
+                          if (adminStartDate && createdDate < new Date(adminStartDate)) return false;
+                          if (adminEndDate) {
+                            const end = new Date(adminEndDate);
+                            end.setHours(23, 59, 59, 999);
+                            if (createdDate > end) return false;
+                          }
+                        }
+                      }
+
+                      return true;
+                    });
+
+                    if (filteredAdmins.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={7} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                            {hasActiveAdminFilters ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                                <span>No cafe admins found matching your filter criteria.</span>
+                                <button
+                                  type="button"
+                                  onClick={resetAdminFilters}
+                                  className="btn-secondary"
+                                  style={{ fontSize: '0.78rem', padding: '6px 14px' }}
+                                >
+                                  Clear Filters
+                                </button>
+                              </div>
+                            ) : (
+                              'No cafe admins found. Click "+ Add Admin" to assign an administrator to a cafe.'
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return filteredAdmins.map((adm) => (
                       <tr key={adm.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                        <td style={{ padding: '10px 14px' }}>
-                          <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#ffffff' }}>{adm.name}</div>
-                          <div style={{ color: '#94a3b8', fontSize: '0.74rem', marginTop: '1px' }}>{adm.email}</div>
+                        <td style={{ padding: '10px 14px', width: '22%', overflow: 'hidden' }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{adm.name}</div>
+                          <div style={{ color: '#94a3b8', fontSize: '0.74rem', marginTop: '1px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{adm.email}</div>
                         </td>
-                        <td style={{ padding: '10px 14px', color: '#f8fafc', fontWeight: 600, fontSize: '0.82rem' }}>{adm.cafe}</td>
-                        <td style={{ padding: '10px 14px' }}>
-                          <span className="badge badge-indigo" style={{ padding: '2px 8px', fontSize: '0.7rem' }}>{adm.role}</span>
+                        <td style={{ padding: '10px 14px', width: '18%', color: '#f8fafc', fontWeight: 600, fontSize: '0.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{adm.cafe}</td>
+                        <td style={{ padding: '10px 14px', width: '11%', whiteSpace: 'nowrap' }}>
+                          <span className={`badge ${adm.role === 'Manager' ? 'badge-gold' : 'badge-indigo'}`} style={{ padding: '2px 8px', fontSize: '0.7rem' }}>{adm.role}</span>
                         </td>
-                        <td style={{ padding: '10px 14px', color: '#cbd5e1', fontSize: '0.78rem' }}>{adm.login}</td>
-                        <td style={{ padding: '10px 14px' }}>
+                        <td style={{ padding: '10px 14px', width: '13%', color: '#94a3b8', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{adm.createdStr}</td>
+                        <td style={{ padding: '10px 14px', width: '13%', whiteSpace: 'nowrap' }}>
+                          {adm.lastLoginAt ? (
+                            <span style={{ color: '#cbd5e1', fontSize: '0.78rem' }}>{adm.login}</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.74rem', fontStyle: 'italic' }}>Never Logged In</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '10px 14px', width: '11%', whiteSpace: 'nowrap' }}>
                           <span className={`badge ${adm.status ? 'badge-emerald' : 'badge-gold'}`} style={{ padding: '2px 8px', fontSize: '0.7rem' }}>
                             ● {adm.status ? 'Active' : 'Inactive'}
                           </span>
                         </td>
-                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>
-                          <div style={{ display: 'inline-flex', gap: '6px' }}>
+                        <td style={{ padding: '10px 14px', width: '12%', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'inline-flex', gap: '6px', justifyContent: 'center' }}>
                             <button
                               onClick={() => handleOpenEditAdmin(adm)}
                               className="btn-secondary"
@@ -1776,27 +2197,166 @@ export default function SuperAdminPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
               <div className="glass-panel" style={{ padding: '20px', textAlign: 'center' }}>
                 <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Total Customers</span>
-                <div style={{ fontSize: '2rem', fontWeight: 800, marginTop: '4px' }}>1,240</div>
+                <div style={{ fontSize: '2rem', fontWeight: 800, marginTop: '4px' }}>{customersList.length}</div>
               </div>
               <div className="glass-panel" style={{ padding: '20px', textAlign: 'center' }}>
                 <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Active</span>
-                <div style={{ fontSize: '2rem', fontWeight: 800, marginTop: '4px', color: '#10b981' }}>980</div>
+                <div style={{ fontSize: '2rem', fontWeight: 800, marginTop: '4px', color: '#10b981' }}>
+                  {customersList.filter((c: any) => c.isActive !== false).length}
+                </div>
               </div>
               <div className="glass-panel" style={{ padding: '20px', textAlign: 'center' }}>
-                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>New This Month</span>
-                <div style={{ fontSize: '2rem', fontWeight: 800, marginTop: '4px', color: 'var(--accent-gold)' }}>124</div>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Total Visits Logged</span>
+                <div style={{ fontSize: '2rem', fontWeight: 800, marginTop: '4px', color: 'var(--accent-gold)' }}>
+                  {customersList.reduce((acc: number, c: any) => acc + (c._count?.visitLogs || (c.customerLoyalty?.[0]?.totalVisits ?? 0)), 0)}
+                </div>
               </div>
             </div>
 
-            {/* Search */}
-            <div className="glass-panel" style={{ padding: '14px 20px' }}>
-              <input
-                type="text"
-                placeholder="🔍 Search customer name / email / phone..."
-                className="input-field"
-                value={customerSearchQuery}
-                onChange={(e) => setCustomerSearchQuery(e.target.value)}
-              />
+            {/* Search and Date Filter Controls */}
+            <div
+              className="glass-panel"
+              style={{
+                padding: '16px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+              }}
+            >
+              {/* Row 1: Search by Name / Phone / Email & Date Range Buttons */}
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ position: 'relative', flex: 1, minWidth: '280px' }}>
+                  <Search
+                    size={16}
+                    color="var(--text-muted)"
+                    style={{ position: 'absolute', left: '14px', top: '15px' }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="🔍 Search by customer name, phone, or email..."
+                    className="input-field"
+                    style={{ paddingLeft: '40px', paddingRight: customerSearchQuery ? '36px' : '14px' }}
+                    value={customerSearchQuery}
+                    onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                  />
+                  {customerSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setCustomerSearchQuery('')}
+                      style={{
+                        position: 'absolute',
+                        right: '12px',
+                        top: '12px',
+                        color: 'var(--text-muted)',
+                        background: 'transparent',
+                        padding: '4px',
+                        cursor: 'pointer',
+                      }}
+                      title="Clear search"
+                    >
+                      <X size={15} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Quick Date Range Filters */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    padding: '4px',
+                    borderRadius: '10px',
+                    border: '1px solid var(--border-card)',
+                  }}
+                >
+                  <Calendar size={15} color="var(--text-muted)" style={{ marginLeft: '8px', marginRight: '4px' }} />
+                  {[
+                    { id: 'all', label: 'All Time' },
+                    { id: 'today', label: 'Today' },
+                    { id: '7d', label: 'Last 7 Days' },
+                    { id: '30d', label: 'Last 30 Days' },
+                    { id: 'custom', label: 'Custom' },
+                  ].map((tab) => {
+                    const isSelected = customerDateRange === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setCustomerDateRange(tab.id as any)}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '0.78rem',
+                          fontWeight: isSelected ? 700 : 500,
+                          color: isSelected ? '#0c0b0a' : 'var(--text-secondary)',
+                          background: isSelected
+                            ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
+                            : 'transparent',
+                          transition: 'all 0.2s',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Row 2: Custom Date Pickers (visible when 'custom' is selected) */}
+              {customerDateRange === 'custom' && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '10px 14px',
+                    borderRadius: '10px',
+                    background: 'rgba(245, 158, 11, 0.04)',
+                    border: '1px dashed rgba(245, 158, 11, 0.25)',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span style={{ fontSize: '0.8rem', color: 'var(--accent-gold)', fontWeight: 600 }}>
+                    Date Filter Range:
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>From:</span>
+                    <input
+                      type="date"
+                      className="input-field"
+                      style={{ padding: '6px 10px', fontSize: '0.8rem', width: 'auto' }}
+                      value={customerStartDate}
+                      onChange={(e) => setCustomerStartDate(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>To:</span>
+                    <input
+                      type="date"
+                      className="input-field"
+                      style={{ padding: '6px 10px', fontSize: '0.8rem', width: 'auto' }}
+                      value={customerEndDate}
+                      onChange={(e) => setCustomerEndDate(e.target.value)}
+                    />
+                  </div>
+                  {(customerStartDate || customerEndDate) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerStartDate('');
+                        setCustomerEndDate('');
+                      }}
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '0.75rem' }}
+                    >
+                      Reset Date Filter
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Customer Table */}
@@ -1808,41 +2368,237 @@ export default function SuperAdminPage() {
                     <th style={{ padding: '16px 20px' }}>Cafe</th>
                     <th style={{ padding: '16px 20px' }}>Visits</th>
                     <th style={{ padding: '16px 20px' }}>Rewards</th>
-                    <th style={{ padding: '16px 20px' }}>Last Visit</th>
+                    <th style={{ padding: '16px 20px' }}>Joined Date</th>
                     <th style={{ padding: '16px 20px' }}>Status</th>
+                    <th style={{ padding: '16px 20px', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {[
-                    { name: 'Payal Patel', email: 'payal@example.com', cafe: 'Trio Cafe', visits: 24, rewards: 8, last: 'Today', status: 'Active' },
-                    { name: 'Rahul Khanna', email: 'rahul@example.com', cafe: 'Cafe Aroma', visits: 18, rewards: 4, last: 'Yesterday', status: 'Active' },
-                    { name: 'Kavita Joshi', email: 'kavita@example.com', cafe: 'The Daily Grind', visits: 12, rewards: 2, last: '3 days ago', status: 'Active' },
-                  ].map((cust, idx) => (
-                    <tr
-                      key={idx}
-                      onClick={() => setSelectedCustomerProfile(cust)}
-                      style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', cursor: 'pointer' }}
-                    >
-                      <td style={{ padding: '16px 20px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#f59e0b', color: '#0c0b0a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>
-                            {cust.name[0]}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 700 }}>{cust.name}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{cust.email}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ padding: '16px 20px' }}>{cust.cafe}</td>
-                      <td style={{ padding: '16px 20px', fontWeight: 700 }}>{cust.visits}</td>
-                      <td style={{ padding: '16px 20px', color: 'var(--accent-gold)' }}>{cust.rewards}</td>
-                      <td style={{ padding: '16px 20px', color: 'var(--text-muted)' }}>{cust.last}</td>
-                      <td style={{ padding: '16px 20px' }}>
-                        <span className="badge badge-emerald">● Active</span>
-                      </td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    const filtered = customersList.filter((c: any) => {
+                      // 1. Text Search (Name, Phone, Email, Cafe)
+                      if (customerSearchQuery.trim()) {
+                        const q = customerSearchQuery.toLowerCase();
+                        const matchName = c.name?.toLowerCase().includes(q);
+                        const matchPhone = c.phone?.includes(q);
+                        const matchEmail = c.email?.toLowerCase().includes(q);
+                        const matchCafe = (c.client?.name || c.customerLoyalty?.[0]?.client?.name)?.toLowerCase().includes(q);
+                        if (!matchName && !matchPhone && !matchEmail && !matchCafe) return false;
+                      }
+
+                      // 2. Date-wise Filter
+                      if (customerDateRange !== 'all') {
+                        if (!c.registeredAt) return false;
+                        const regDate = new Date(c.registeredAt);
+                        const now = new Date();
+
+                        if (customerDateRange === 'today') {
+                          if (regDate.toDateString() !== now.toDateString()) return false;
+                        } else if (customerDateRange === '7d') {
+                          const past7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+                          if (regDate < past7) return false;
+                        } else if (customerDateRange === '30d') {
+                          const past30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+                          if (regDate < past30) return false;
+                        } else if (customerDateRange === 'custom') {
+                          if (customerStartDate && regDate < new Date(customerStartDate)) return false;
+                          if (customerEndDate) {
+                            const end = new Date(customerEndDate);
+                            end.setHours(23, 59, 59, 999);
+                            if (regDate > end) return false;
+                          }
+                        }
+                      }
+
+                      return true;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={7} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                            No customers found matching your filters.
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return filtered.map((c: any) => {
+                      const totalVisits = c._count?.visitLogs ?? c.customerLoyalty?.reduce((acc: number, curr: any) => acc + (curr.totalVisits || 0), 0) ?? 0;
+                      const totalRewards = c._count?.customerRewards ?? 0;
+                      const cafeName = c.client?.name || c.customerLoyalty?.[0]?.client?.name || 'Global Customer';
+                      const joinedDate = c.registeredAt
+                        ? new Date(c.registeredAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                        : 'N/A';
+
+                      return (
+                        <tr
+                          key={c.id}
+                          style={{
+                            borderBottom: '1px solid var(--border-card)',
+                          }}
+                        >
+                          <td style={{ padding: '16px 20px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div
+                                style={{
+                                  width: '36px',
+                                  height: '36px',
+                                  borderRadius: '50%',
+                                  background: 'linear-gradient(135deg, #f59e0b 0%, #ea580c 100%)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontWeight: 700,
+                                  color: '#0c0b0a',
+                                  fontSize: '0.9rem',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {c.name ? c.name[0].toUpperCase() : 'C'}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 600, color: '#fff' }}>{c.name}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                  {c.phone} {c.email ? `• ${c.email}` : ''}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ padding: '16px 20px' }}>
+                            <span className="badge badge-dark" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                              {cafeName}
+                            </span>
+                          </td>
+                          <td style={{ padding: '16px 20px', fontWeight: 600, color: 'var(--accent-gold)' }}>
+                            {totalVisits}
+                          </td>
+                          <td style={{ padding: '16px 20px', fontWeight: 600, color: '#10b981' }}>
+                            {totalRewards}
+                          </td>
+                          <td style={{ padding: '16px 20px', color: 'var(--text-muted)' }}>
+                            {joinedDate}
+                          </td>
+                          <td style={{ padding: '16px 20px' }}>
+                            <span className={`badge ${c.isActive !== false ? 'badge-green' : 'badge-gray'}`}>
+                              {c.isActive !== false ? 'ACTIVE' : 'INACTIVE'}
+                            </span>
+                          </td>
+                          <td
+                            style={{ padding: '16px 20px', textAlign: 'right' }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', justifyContent: 'flex-end' }}>
+                              <button
+                                type="button"
+                                title="View Customer Details Card"
+                                onClick={() => setSelectedCustomerProfile({
+                                  id: c.id,
+                                  name: c.name,
+                                  phone: c.phone,
+                                  email: c.email || 'Not provided',
+                                  cafe: cafeName,
+                                  visits: totalVisits,
+                                  rewards: totalRewards,
+                                  isActive: c.isActive !== false,
+                                  joinedDate: joinedDate,
+                                  qrToken: c.qrToken || c.id,
+                                  rawCustomer: c,
+                                })}
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  background: 'rgba(56, 189, 248, 0.08)',
+                                  border: '1px solid rgba(56, 189, 248, 0.25)',
+                                  color: '#38bdf8',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s ease',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 600,
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = 'rgba(56, 189, 248, 0.18)';
+                                  e.currentTarget.style.borderColor = '#38bdf8';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = 'rgba(56, 189, 248, 0.08)';
+                                  e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.25)';
+                                }}
+                              >
+                                <Eye size={13} />
+                                <span>View</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                title="Edit Customer"
+                                onClick={() => openEditCustomerModal(c)}
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  background: 'rgba(245, 158, 11, 0.08)',
+                                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                                  color: 'var(--accent-gold)',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s ease',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 600,
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = 'rgba(245, 158, 11, 0.18)';
+                                  e.currentTarget.style.borderColor = 'var(--accent-gold)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = 'rgba(245, 158, 11, 0.08)';
+                                  e.currentTarget.style.borderColor = 'rgba(245, 158, 11, 0.25)';
+                                }}
+                              >
+                                <Edit size={13} />
+                                <span>Edit</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                title="Delete Customer"
+                                onClick={() => setDeletingCustomerTarget({ id: c.id, name: c.name })}
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  background: 'rgba(239, 68, 68, 0.08)',
+                                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                                  color: '#ef4444',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s ease',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 600,
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+                                  e.currentTarget.style.borderColor = '#ef4444';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)';
+                                  e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.25)';
+                                }}
+                              >
+                                <Trash2 size={13} />
+                                <span>Delete</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -2061,9 +2817,9 @@ export default function SuperAdminPage() {
                   <tr style={{ borderBottom: '1px solid var(--border-card)', color: 'var(--text-muted)' }}>
                     <th style={{ padding: '16px 20px' }}>Customer</th>
                     <th style={{ padding: '16px 20px' }}>Message Type</th>
-                    <th style={{ padding: '16px 20px' }}>Sent At</th>
-                    <th style={{ padding: '16px 20px' }}>Status</th>
-                    <th style={{ padding: '16px 20px', textAlign: 'right' }}>Actions</th>
+                    <th style={{ padding: '16px 20px', width: '120px', whiteSpace: 'nowrap' }}>Sent At</th>
+                    <th style={{ padding: '16px 20px', width: '130px', whiteSpace: 'nowrap' }}>Status</th>
+                    <th style={{ padding: '16px 20px', width: '100px', textAlign: 'right', whiteSpace: 'nowrap' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2075,13 +2831,13 @@ export default function SuperAdminPage() {
                     <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                       <td style={{ padding: '16px 20px', fontWeight: 700 }}>{log.cust}</td>
                       <td style={{ padding: '16px 20px', color: 'var(--text-secondary)' }}>{log.msg}</td>
-                      <td style={{ padding: '16px 20px', color: 'var(--text-muted)' }}>{log.time}</td>
-                      <td style={{ padding: '16px 20px' }}>
+                      <td style={{ padding: '16px 20px', width: '120px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{log.time}</td>
+                      <td style={{ padding: '16px 20px', width: '130px', whiteSpace: 'nowrap' }}>
                         <span className={`badge ${log.status === 'Delivered' ? 'badge-emerald' : 'badge-gold'}`}>
                           {log.status === 'Delivered' ? '✓ Delivered' : '✕ Failed'}
                         </span>
                       </td>
-                      <td style={{ padding: '16px 20px', textAlign: 'right' }}>
+                      <td style={{ padding: '16px 20px', width: '100px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {log.status === 'Failed' && (
                           <button
                             onClick={() => toast('Message queued for retry.', 'success')}
@@ -2649,92 +3405,303 @@ export default function SuperAdminPage() {
       )}
 
       {/* ============================================================== */}
-      {/* SLIDE-OVER DRAWER: 5. CUSTOMER PROFILE DRAWER */}
+      {/* MODAL: 5. CUSTOMER PROFILE CARD (VIEW ONLY) */}
       {/* ============================================================== */}
       {selectedCustomerProfile && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', zIndex: 200, display: 'flex', justifyContent: 'flex-end' }}>
+        <div
+          onClick={() => setSelectedCustomerProfile(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.78)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 300,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+          }}
+        >
           <div
             className="glass-panel"
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: '100%',
-              maxWidth: '440px',
-              height: '100%',
-              borderRadius: 0,
-              padding: '36px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              overflowY: 'auto',
+              maxWidth: '460px',
+              borderRadius: '24px',
+              padding: '28px',
+              border: '1px solid rgba(245, 158, 11, 0.25)',
+              boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 30px rgba(245, 158, 11, 0.08)',
+              position: 'relative',
             }}
           >
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '14px' }}>
-                <button onClick={() => setSelectedCustomerProfile(null)} style={{ color: 'var(--text-muted)' }}>
-                  <X size={20} />
-                </button>
-              </div>
+            {/* Header: View Only Tag & Close Button */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <span
+                style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  color: 'var(--accent-gold)',
+                  background: 'rgba(245, 158, 11, 0.12)',
+                  padding: '4px 10px',
+                  borderRadius: '20px',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                }}
+              >
+                Customer Profile Details
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedCustomerProfile(null)}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid var(--border-card)',
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = '#fff';
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = 'var(--text-muted)';
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
 
-              {/* Profile Avatar */}
-              <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-                <div
+            {/* Profile Avatar & Identity */}
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div
+                style={{
+                  width: '68px',
+                  height: '68px',
+                  borderRadius: '50%',
+                  background: 'linear-gradient(135deg, #f59e0b 0%, #ea580c 100%)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1.75rem',
+                  fontWeight: 800,
+                  color: '#0c0b0a',
+                  marginBottom: '12px',
+                  boxShadow: '0 8px 24px rgba(245, 158, 11, 0.35)',
+                  border: '3px solid rgba(255, 255, 255, 0.15)',
+                }}
+              >
+                {selectedCustomerProfile.name ? selectedCustomerProfile.name[0].toUpperCase() : 'C'}
+              </div>
+              <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#fff', margin: '0 0 6px 0' }}>
+                {selectedCustomerProfile.name}
+              </h3>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                <span className={`badge ${selectedCustomerProfile.isActive !== false ? 'badge-green' : 'badge-gray'}`} style={{ fontSize: '0.72rem' }}>
+                  {selectedCustomerProfile.isActive !== false ? 'ACTIVE CUSTOMER' : 'INACTIVE'}
+                </span>
+                <span
                   style={{
-                    width: '64px',
-                    height: '64px',
-                    borderRadius: '50%',
-                    background: 'linear-gradient(135deg, #f59e0b 0%, #ea580c 100%)',
+                    fontSize: '0.75rem',
+                    color: 'var(--text-secondary)',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    padding: '3px 8px',
+                    borderRadius: '6px',
                     display: 'inline-flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '1.6rem',
-                    fontWeight: 800,
-                    color: '#0c0b0a',
-                    marginBottom: '10px',
+                    gap: '4px',
                   }}
                 >
-                  {selectedCustomerProfile.name[0]}
-                </div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>{selectedCustomerProfile.name}</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{selectedCustomerProfile.email}</p>
+                  <Coffee size={12} color="var(--accent-gold)" />
+                  {selectedCustomerProfile.cafe}
+                </span>
               </div>
+            </div>
 
-              {/* Totals */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
-                <div style={{ padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', textAlign: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total Visits</span>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-gold)' }}>{selectedCustomerProfile.visits}</div>
-                </div>
-                <div style={{ padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', textAlign: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Rewards Earned</span>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#10b981' }}>{selectedCustomerProfile.rewards}</div>
+            {/* Key Metrics: Visits & Rewards */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+              <div
+                style={{
+                  padding: '14px',
+                  background: 'rgba(245, 158, 11, 0.06)',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(245, 158, 11, 0.18)',
+                  textAlign: 'center',
+                }}
+              >
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Total Visits
+                </span>
+                <div style={{ fontSize: '1.65rem', fontWeight: 800, color: 'var(--accent-gold)', marginTop: '2px' }}>
+                  {selectedCustomerProfile.visits}
                 </div>
               </div>
+              <div
+                style={{
+                  padding: '14px',
+                  background: 'rgba(16, 185, 129, 0.06)',
+                  borderRadius: '14px',
+                  border: '1px solid rgba(16, 185, 129, 0.18)',
+                  textAlign: 'center',
+                }}
+              >
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Rewards Earned
+                </span>
+                <div style={{ fontSize: '1.65rem', fontWeight: 800, color: '#10b981', marginTop: '2px' }}>
+                  {selectedCustomerProfile.rewards}
+                </div>
+              </div>
+            </div>
 
-              {/* Visit History */}
-              <div>
-                <h4 style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '10px' }}>Visit History</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {[
-                    { date: '20 Sep', cafe: selectedCustomerProfile.cafe, type: 'QR Scan' },
-                    { date: '18 Sep', cafe: selectedCustomerProfile.cafe, type: 'QR Scan' },
-                    { date: '12 Sep', cafe: selectedCustomerProfile.cafe, type: 'Reward Claim' },
-                  ].map((v, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        padding: '10px 14px',
-                        background: 'rgba(255,255,255,0.02)',
-                        borderRadius: '8px',
-                        fontSize: '0.8rem',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <span>{v.date} • {v.cafe}</span>
-                      <span className="badge badge-emerald" style={{ fontSize: '0.65rem' }}>{v.type}</span>
-                    </div>
-                  ))}
-                </div>
+            {/* Information Details List */}
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+                borderRadius: '14px',
+                border: '1px solid rgba(255, 255, 255, 0.06)',
+                padding: '14px 16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                marginBottom: '20px',
+                fontSize: '0.85rem',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Phone size={14} color="var(--accent-gold)" /> Phone
+                </span>
+                <span style={{ fontWeight: 600, color: '#fff' }}>
+                  {selectedCustomerProfile.phone || 'N/A'}
+                </span>
               </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Mail size={14} color="var(--accent-gold)" /> Email
+                </span>
+                <span style={{ fontWeight: 500, color: selectedCustomerProfile.email && selectedCustomerProfile.email !== 'Not provided' ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+                  {selectedCustomerProfile.email || 'Not provided'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Calendar size={14} color="var(--accent-gold)" /> Joined Date
+                </span>
+                <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>
+                  {selectedCustomerProfile.joinedDate || 'Recent'}
+                </span>
+              </div>
+              {selectedCustomerProfile.qrToken && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Sparkles size={14} color="var(--accent-gold)" /> QR Token
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'monospace',
+                      fontSize: '0.75rem',
+                      color: 'var(--accent-gold)',
+                      background: 'rgba(245, 158, 11, 0.1)',
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                    }}
+                  >
+                    {String(selectedCustomerProfile.qrToken).slice(0, 16)}...
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons: Edit, Delete, Close */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetCustomer = selectedCustomerProfile.rawCustomer || {
+                    id: selectedCustomerProfile.id,
+                    name: selectedCustomerProfile.name,
+                    phone: selectedCustomerProfile.phone,
+                    email: selectedCustomerProfile.email !== 'Not provided' ? selectedCustomerProfile.email : '',
+                    isActive: selectedCustomerProfile.isActive,
+                  };
+                  openEditCustomerModal(targetCustomer);
+                  setSelectedCustomerProfile(null);
+                }}
+                className="btn-secondary"
+                style={{
+                  padding: '10px',
+                  borderRadius: '12px',
+                  fontWeight: 600,
+                  fontSize: '0.84rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  color: 'var(--accent-gold)',
+                  borderColor: 'rgba(245, 158, 11, 0.35)',
+                  background: 'rgba(245, 158, 11, 0.08)',
+                }}
+              >
+                <Edit size={14} />
+                <span>Edit</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingCustomerTarget({ id: selectedCustomerProfile.id, name: selectedCustomerProfile.name });
+                  setSelectedCustomerProfile(null);
+                }}
+                style={{
+                  padding: '10px',
+                  borderRadius: '12px',
+                  fontWeight: 600,
+                  fontSize: '0.84rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: '#ef4444',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
+                }}
+              >
+                <Trash2 size={14} />
+                <span>Delete</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedCustomerProfile(null)}
+                className="btn-secondary"
+                style={{
+                  padding: '10px',
+                  borderRadius: '12px',
+                  fontWeight: 600,
+                  fontSize: '0.84rem',
+                  justifyContent: 'center',
+                }}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
@@ -3372,6 +4339,267 @@ export default function SuperAdminPage() {
           </div>
         </div>
       )}
-    </div>
-  );
+
+      {/* ============================================================== */}
+      {/* MODAL: EDIT CUSTOMER DETAILS */}
+      {/* ============================================================== */}
+      {editingCustomer && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0, 0, 0, 0.78)',
+                backdropFilter: 'blur(8px)',
+                zIndex: 300,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '20px',
+              }}
+            >
+              <div
+                className="glass-panel"
+                style={{
+                  width: '100%',
+                  maxWidth: '480px',
+                  padding: '32px',
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+                  borderRadius: '24px',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div
+                      style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '12px',
+                        background: 'rgba(245, 158, 11, 0.15)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: 'var(--accent-gold)',
+                      }}
+                    >
+                      <Edit size={20} />
+                    </div>
+                    <div>
+                      <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>Edit Customer</h3>
+                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        Update profile info for {editingCustomer.name}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingCustomer(null)}
+                    style={{ color: 'var(--text-muted)', background: 'transparent', cursor: 'pointer' }}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleUpdateCustomer}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '24px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                        Full Name *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        className="input-field"
+                        value={customerEditForm.name}
+                        onChange={(e) => setCustomerEditForm({ ...customerEditForm, name: e.target.value })}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                        Phone Number *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        className="input-field"
+                        value={customerEditForm.phone}
+                        onChange={(e) => setCustomerEditForm({ ...customerEditForm, phone: e.target.value })}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        className="input-field"
+                        placeholder="name@example.com (optional)"
+                        value={customerEditForm.email}
+                        onChange={(e) => setCustomerEditForm({ ...customerEditForm, email: e.target.value })}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                        Account Status
+                      </label>
+                      <select
+                        className="input-field"
+                        value={customerEditForm.isActive ? 'active' : 'inactive'}
+                        onChange={(e) => setCustomerEditForm({ ...customerEditForm, isActive: e.target.value === 'active' })}
+                      >
+                        <option value="active">Active (QR Pass & Points Enabled)</option>
+                        <option value="inactive">Inactive / Suspended</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                    <button
+                      type="button"
+                      disabled={isUpdatingCustomer}
+                      onClick={() => setEditingCustomer(null)}
+                      className="btn-secondary"
+                      style={{ opacity: isUpdatingCustomer ? 0.5 : 1 }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isUpdatingCustomer}
+                      className="btn-primary"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        opacity: isUpdatingCustomer ? 0.7 : 1,
+                      }}
+                    >
+                      {isUpdatingCustomer ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          <span>Saving...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check size={16} />
+                          <span>Save Changes</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================== */}
+          {/* MODAL: IN-APP DELETE CUSTOMER CONFIRMATION */}
+          {/* ============================================================== */}
+          {deletingCustomerTarget && (
+            <div
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0, 0, 0, 0.8)',
+                backdropFilter: 'blur(8px)',
+                zIndex: 300,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '20px',
+              }}
+            >
+              <div
+                className="glass-panel"
+                style={{
+                  width: '100%',
+                  maxWidth: '440px',
+                  padding: '28px',
+                  border: '1px solid rgba(244, 63, 94, 0.3)',
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+                  borderRadius: '20px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+                  <div
+                    style={{
+                      width: '44px',
+                      height: '44px',
+                      borderRadius: '12px',
+                      background: 'rgba(244, 63, 94, 0.12)',
+                      border: '1px solid rgba(244, 63, 94, 0.3)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#fb7185',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <AlertTriangle size={22} />
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#fff' }}>Delete Customer</h3>
+                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>Confirm permanent removal</p>
+                  </div>
+                </div>
+
+                <p style={{ fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '22px' }}>
+                  Are you sure you want to permanently delete customer{' '}
+                  <strong style={{ color: '#fff' }}>&quot;{deletingCustomerTarget.name}&quot;</strong>?
+                  All associated visits, scan logs, loyalty progress, and rewards will be deleted. This action{' '}
+                  <span style={{ color: '#fb7185', fontWeight: 600 }}>cannot be undone</span>.
+                </p>
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    disabled={isDeletingCustomer}
+                    onClick={() => setDeletingCustomerTarget(null)}
+                    className="btn-secondary"
+                    style={{ opacity: isDeletingCustomer ? 0.5 : 1 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDeletingCustomer}
+                    onClick={handleDeleteCustomer}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      background: '#e11d48',
+                      color: '#fff',
+                      border: 'none',
+                      padding: '9px 18px',
+                      borderRadius: '10px',
+                      fontSize: '0.88rem',
+                      fontWeight: 600,
+                      cursor: isDeletingCustomer ? 'not-allowed' : 'pointer',
+                      opacity: isDeletingCustomer ? 0.7 : 1,
+                      boxShadow: '0 4px 14px rgba(225, 29, 72, 0.4)',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    {isDeletingCustomer ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        <span>Deleting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 size={16} />
+                        <span>Delete Customer</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
 }

@@ -204,6 +204,24 @@ export const superAdminApi = {
       pagination: data.pagination,
     };
   },
+  listCustomers: async (query?: { search?: string; startDate?: string; endDate?: string; page?: number; limit?: number }): Promise<{ customers: any[]; pagination: any }> => {
+    const res = await apiClient.get('/api/super-admin/customers', {
+      params: query,
+      role: 'super_admin',
+    } as any);
+    const data = extractData(res);
+    return {
+      customers: data.items || data || [],
+      pagination: data.pagination,
+    };
+  },
+  updateCustomer: async (id: string, payload: { name?: string; email?: string; phone?: string; isActive?: boolean }): Promise<{ customer: any }> => {
+    const res = await apiClient.patch(`/api/super-admin/customers/${id}`, payload, { role: 'super_admin' } as any);
+    return extractData(res);
+  },
+  deleteCustomer: async (id: string): Promise<void> => {
+    await apiClient.delete(`/api/super-admin/customers/${id}`, { role: 'super_admin' } as any);
+  },
 };
 
 // ================= CLIENT ADMIN (CAFE OWNER) API =================
