@@ -4111,6 +4111,43 @@ export default function SuperAdminPage() {
                 </div>
               </div>
 
+              {/* Granular Permissions Assignment */}
+              <div
+                style={{
+                  marginBottom: '18px',
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px solid var(--border-card)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--accent-gold)' }}>
+                    Assigned Role Permissions ({adminForm.role === 'Manager' ? 'Cafe Manager' : 'Cafe Admin'})
+                  </span>
+                  <span className="badge badge-gold" style={{ fontSize: '0.62rem' }}>
+                    Cafe Level
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.78rem' }}>
+                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>✓</span> <span>Allowed: Manage Rewards</span>
+                  </div>
+                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>✓</span> <span>Allowed: View Customers</span>
+                  </div>
+                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>✓</span> <span>Allowed: Manage Staff</span>
+                  </div>
+                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>✓</span> <span>Allowed: View Reports</span>
+                  </div>
+                  <div style={{ color: '#fb7185', gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+                    <span>🔒</span> <span>Restricted: Subscription Management (Super Admin only)</span>
+                  </div>
+                </div>
+              </div>
+
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '5px' }}>Password</label>
                 <input
@@ -4914,6 +4951,43 @@ export default function SuperAdminPage() {
                     <option value="Admin">Admin</option>
                     <option value="Manager">Manager</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Granular Permissions Assignment */}
+              <div
+                style={{
+                  marginBottom: '18px',
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px solid var(--border-card)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--accent-gold)' }}>
+                    Permissions ({editingAdminTarget.role === 'Manager' ? 'Cafe Manager' : 'Cafe Admin'})
+                  </span>
+                  <span className="badge badge-gold" style={{ fontSize: '0.62rem' }}>
+                    Cafe Level
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.78rem' }}>
+                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>✓</span> <span>Allowed: Manage Rewards</span>
+                  </div>
+                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>✓</span> <span>Allowed: View Customers</span>
+                  </div>
+                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>✓</span> <span>Allowed: Manage Staff</span>
+                  </div>
+                  <div style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>✓</span> <span>Allowed: View Reports</span>
+                  </div>
+                  <div style={{ color: '#fb7185', gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+                    <span>🔒</span> <span>Restricted: Subscription Management (Super Admin only)</span>
+                  </div>
                 </div>
               </div>
 

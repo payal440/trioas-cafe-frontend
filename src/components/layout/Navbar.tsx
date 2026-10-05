@@ -151,7 +151,7 @@ export const Navbar = () => {
                     letterSpacing: '0.04em',
                   }}
                 >
-                  {role.replace('_', ' ')}
+                  {role === 'client_admin' ? 'CAFE MANAGER' : role.replace('_', ' ')}
                 </span>
               </div>
               <button

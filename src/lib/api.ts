@@ -27,13 +27,15 @@ export const apiClient: AxiosInstance = axios.create({
 export const getStoredToken = (role?: string | null): string | null => {
   if (typeof window === 'undefined') return null;
   if (role) {
-    return localStorage.getItem(`trioas_token_${role}`);
+    const roleToken = localStorage.getItem(`trioas_token_${role}`);
+    if (roleToken) return roleToken;
   }
   return (
-    localStorage.getItem('trioas_token_super_admin') ||
     localStorage.getItem('trioas_token_client_admin') ||
     localStorage.getItem('trioas_token_staff') ||
-    localStorage.getItem('trioas_token')
+    localStorage.getItem('trioas_token_super_admin') ||
+    localStorage.getItem('trioas_token') ||
+    localStorage.getItem('token')
   );
 };
 
@@ -327,6 +329,33 @@ export const clientAdminApi = {
     const data = extractData(res);
     return { rewards: data.items || (Array.isArray(data) ? data : []) };
   },
+  generateVisitQR: async (payload?: { expiresInSeconds?: number }): Promise<{
+    token: string;
+    clientId: string;
+    staffId: string;
+    staffName: string;
+    expiresAt: number;
+    expiresInSeconds: number;
+    qrPayload: string;
+  }> => {
+    const res = await apiClient.post('/api/client-admin/visit-qr/generate', payload || {}, { role: 'client_admin' } as any);
+    return extractData(res);
+  },
+  getVisitQRStatus: async (token: string): Promise<{
+    found: boolean;
+    token: string;
+    clientId: string;
+    isUsed: boolean;
+    isExpired: boolean;
+    scannedAt?: string;
+    customer?: { id: string; name: string; phone: string };
+    visitNumber?: number;
+    isRewardUnlocked?: boolean;
+    reward?: any;
+  }> => {
+    const res = await apiClient.get(`/api/client-admin/visit-qr/status/${token}`, { role: 'client_admin' } as any);
+    return extractData(res);
+  },
 };
 
 // ================= STAFF API =================
@@ -377,6 +406,33 @@ export const staffApi = {
     const data = extractData(res);
     return { visits: data.items || (Array.isArray(data) ? data : []) };
   },
+  generateVisitQR: async (payload?: { expiresInSeconds?: number }): Promise<{
+    token: string;
+    clientId: string;
+    staffId: string;
+    staffName: string;
+    expiresAt: number;
+    expiresInSeconds: number;
+    qrPayload: string;
+  }> => {
+    const res = await apiClient.post('/api/staff/visit-qr/generate', payload || {}, { role: 'staff' } as any);
+    return extractData(res);
+  },
+  getVisitQRStatus: async (token: string): Promise<{
+    found: boolean;
+    token: string;
+    clientId: string;
+    isUsed: boolean;
+    isExpired: boolean;
+    scannedAt?: string;
+    customer?: { id: string; name: string; phone: string };
+    visitNumber?: number;
+    isRewardUnlocked?: boolean;
+    reward?: any;
+  }> => {
+    const res = await apiClient.get(`/api/staff/visit-qr/status/${token}`, { role: 'staff' } as any);
+    return extractData(res);
+  },
 };
 
 // ================= CUSTOMER API =================
@@ -411,5 +467,45 @@ export const customerApi = {
     const res = await apiClient.get(`/api/customer/${customerId}/rewards`);
     const data = extractData(res);
     return { rewards: Array.isArray(data) ? data : data.items || [] };
+  },
+  scanVisit: async (payload: { customerId: string; qrPayload: string }): Promise<{
+    success: boolean;
+    visitNumber: number;
+    totalVisits: number;
+    requiredVisits: number;
+    isRewardUnlocked: boolean;
+    unlockedReward?: CustomerReward;
+    cafeName: string;
+    message: string;
+  }> => {
+    const res = await apiClient.post('/api/customer/scan-visit', payload);
+    return extractData(res);
+  },
+  generateVisitQR: async (payload?: { clientId?: string; staffId?: string; staffName?: string; expiresInSeconds?: number }): Promise<{
+    token: string;
+    clientId: string;
+    staffId: string;
+    staffName: string;
+    expiresAt: number;
+    expiresInSeconds: number;
+    qrPayload: string;
+  }> => {
+    const res = await apiClient.post('/api/customer/visit-qr/generate', payload || {});
+    return extractData(res);
+  },
+  getVisitQRStatus: async (token: string): Promise<{
+    found: boolean;
+    token: string;
+    clientId: string;
+    isUsed: boolean;
+    isExpired: boolean;
+    scannedAt?: string;
+    customer?: { id: string; name: string; phone: string };
+    visitNumber?: number;
+    isRewardUnlocked?: boolean;
+    reward?: any;
+  }> => {
+    const res = await apiClient.get(`/api/customer/visit-qr/status/${token}`);
+    return extractData(res);
   },
 };
