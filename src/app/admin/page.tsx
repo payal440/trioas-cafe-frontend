@@ -98,9 +98,40 @@ export default function CafeAdminDashboard() {
     expiresAt: number;
     qrPayload: string;
     expiresInSeconds: number;
+    clientId?: string;
+    sig?: string;
+    localIp?: string;
   } | null>(null);
   const [terminalSecondsRemaining, setTerminalSecondsRemaining] = useState<number>(30);
   const [terminalQRLoading, setTerminalQRLoading] = useState<boolean>(false);
+
+  // Generates clickable web URL that Google Lens and mobile camera apps recognize
+  const getSmartTerminalScanUrl = (qr: typeof terminalQR) => {
+    if (!qr) return '';
+    if (typeof window === 'undefined') return qr.qrPayload || '';
+
+    let sig = qr.sig;
+    let clientId = qr.clientId || (user as any)?.clientId || dashboardData?.client?.id || 'c0000000-0000-0000-0000-000000000001';
+    if (!sig && qr.qrPayload) {
+      try {
+        const parsed = JSON.parse(qr.qrPayload);
+        sig = parsed.sig;
+        if (parsed.clientId) clientId = parsed.clientId;
+      } catch {}
+    }
+
+    const protocol = window.location.protocol;
+    const port = window.location.port ? `:${window.location.port}` : '';
+    const host =
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+      qr.localIp &&
+      qr.localIp !== 'localhost'
+        ? `${qr.localIp}${port}`
+        : window.location.host;
+
+    return `${protocol}//${host}/customer?scanToken=${encodeURIComponent(qr.token)}&clientId=${encodeURIComponent(clientId)}&expiresAt=${qr.expiresAt}&sig=${encodeURIComponent(sig || '')}`;
+  };
+
   const [terminalLastScanned, setTerminalLastScanned] = useState<{
     customer: { id: string; name: string; phone: string };
     visitNumber: number;
@@ -329,6 +360,7 @@ export default function CafeAdminDashboard() {
           expiresAt,
           expiresInSeconds: 30,
           qrPayload,
+          sig: `sig_local_${token.slice(3, 11)}`,
         };
       }
 
@@ -1444,7 +1476,7 @@ export default function CafeAdminDashboard() {
                 >
                   {terminalQR ? (
                     <QRCodeSVG
-                      value={terminalQR.qrPayload}
+                      value={getSmartTerminalScanUrl(terminalQR)}
                       size={220}
                       level="M"
                       includeMargin={false}
@@ -1459,6 +1491,38 @@ export default function CafeAdminDashboard() {
                 <h4 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#fff', marginBottom: '6px' }}>
                   Show this QR to customer
                 </h4>
+
+                {/* Quick Helper Actions: Test in new tab & Copy Link */}
+                {terminalQR && (
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                    <a
+                      href={getSmartTerminalScanUrl(terminalQR)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-primary"
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: '0.8rem',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        textDecoration: 'none',
+                      }}
+                    >
+                      <span>🔗 Test Customer Scan</span>
+                    </a>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(getSmartTerminalScanUrl(terminalQR));
+                        toast('Scan link copied to clipboard!', 'success');
+                      }}
+                      className="btn-secondary"
+                      style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                    >
+                      📋 Copy Link
+                    </button>
+                  </div>
+                )}
 
                 {/* COUNTDOWN TIMER BADGE: Expires in 00:27 */}
                 <div
@@ -1488,7 +1552,7 @@ export default function CafeAdminDashboard() {
                 </div>
 
                 <p style={{ fontSize: '0.92rem', color: '#e2e8f0', fontWeight: 600, marginBottom: '16px' }}>
-                  Customers can scan this QR to record their visit.
+                  📱 Customers can scan with <strong>Google Lens</strong>, phone camera, or the Customer Portal scanner.
                 </p>
 
                 {/* Real-time Scan Event Notification Banner */}

@@ -43,9 +43,39 @@ export default function StaffScannerPage() {
     expiresAt: number;
     qrPayload: string;
     expiresInSeconds: number;
+    clientId?: string;
+    sig?: string;
+    localIp?: string;
   } | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState<number>(30);
   const [qrLoading, setQrLoading] = useState(false);
+
+  // Generates clickable web URL that Google Lens and mobile camera apps recognize
+  const getSmartScanUrl = (qr: typeof activeQR) => {
+    if (!qr) return '';
+    if (typeof window === 'undefined') return qr.qrPayload || '';
+
+    let sig = qr.sig;
+    let clientId = qr.clientId || (user as any)?.clientId || 'c0000000-0000-0000-0000-000000000001';
+    if (!sig && qr.qrPayload) {
+      try {
+        const parsed = JSON.parse(qr.qrPayload);
+        sig = parsed.sig;
+        if (parsed.clientId) clientId = parsed.clientId;
+      } catch {}
+    }
+
+    const protocol = window.location.protocol;
+    const port = window.location.port ? `:${window.location.port}` : '';
+    const host =
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+      qr.localIp &&
+      qr.localIp !== 'localhost'
+        ? `${qr.localIp}${port}`
+        : window.location.host;
+
+    return `${protocol}//${host}/customer?scanToken=${encodeURIComponent(qr.token)}&clientId=${encodeURIComponent(clientId)}&expiresAt=${qr.expiresAt}&sig=${encodeURIComponent(sig || '')}`;
+  };
 
   // Real-time scan detection state
   const [lastScannedEvent, setLastScannedEvent] = useState<{
@@ -520,7 +550,7 @@ export default function StaffScannerPage() {
           >
             {activeQR ? (
               <QRCodeSVG
-                value={activeQR.qrPayload}
+                value={getSmartScanUrl(activeQR)}
                 size={230}
                 level="M"
                 includeMargin={false}
@@ -535,6 +565,38 @@ export default function StaffScannerPage() {
           <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#fff', marginBottom: '6px' }}>
             Show this QR to customer
           </h2>
+
+          {/* Quick Helper Actions: Test in new tab & Copy Link */}
+          {activeQR && (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <a
+                href={getSmartScanUrl(activeQR)}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-primary"
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '0.8rem',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  textDecoration: 'none',
+                }}
+              >
+                <span>🔗 Test Customer Scan</span>
+              </a>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(getSmartScanUrl(activeQR));
+                  toast('Scan link copied to clipboard!', 'success');
+                }}
+                className="btn-secondary"
+                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              >
+                📋 Copy Link
+              </button>
+            </div>
+          )}
 
           {/* COUNTDOWN TIMER BADGE */}
           <div
@@ -564,7 +626,7 @@ export default function StaffScannerPage() {
           </div>
 
           <p style={{ fontSize: '0.92rem', fontWeight: 600, color: '#e2e8f0', marginBottom: '16px' }}>
-            Customers can scan this QR to record their visit.
+            📱 Customers can scan with <strong>Google Lens</strong>, phone camera, or the Customer Portal scanner.
           </p>
 
           {/* Instructions Callout */}
