@@ -171,15 +171,17 @@ export default function CustomerPortal() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !phone.trim()) {
-      toast('Name and phone number are required', 'error');
+    if (!phone || phone.trim().length < 8) {
+      toast('Please enter a valid phone number (minimum 8 digits)', 'error');
       return;
     }
+
+    const finalName = name.trim() || `Patron ${phone.trim().slice(-4)}`;
 
     try {
       setLoading(true);
       const res = await customerApi.register({
-        name: name.trim(),
+        name: finalName,
         phone: phone.trim(),
         email: email.trim() || undefined,
       });
@@ -432,7 +434,7 @@ export default function CustomerPortal() {
             {isRegistering && (
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                  Full Name
+                  Your Name (Optional)
                 </label>
                 <div style={{ position: 'relative' }}>
                   <User
@@ -442,8 +444,7 @@ export default function CustomerPortal() {
                   />
                   <input
                     type="text"
-                    required
-                    placeholder="e.g. Payal Sharma"
+                    placeholder="e.g. Payal (or leave empty)"
                     className="input-field"
                     style={{ paddingLeft: '40px' }}
                     value={name}

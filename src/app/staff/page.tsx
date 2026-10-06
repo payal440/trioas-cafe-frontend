@@ -22,6 +22,7 @@ import {
   Users,
   Clock,
   ShieldCheck,
+  Wifi,
 } from 'lucide-react';
 import { staffApi, customerApi } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -49,6 +50,20 @@ export default function StaffScannerPage() {
   } | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState<number>(30);
   const [qrLoading, setQrLoading] = useState(false);
+  const [networkHost, setNetworkHost] = useState<string>('192.168.1.13:3000');
+
+  // Discover local Wi-Fi IP so mobile devices scanning QR connect directly
+  useEffect(() => {
+    fetch('/api/network-ip')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.preferredIp && data.preferredIp !== 'localhost') {
+          const port = window.location.port ? `:${window.location.port}` : ':3000';
+          setNetworkHost(`${data.preferredIp}${port}`);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Generates clickable web URL that Google Lens and mobile camera apps recognize
   const getSmartScanUrl = (qr: typeof activeQR) => {
@@ -66,12 +81,11 @@ export default function StaffScannerPage() {
     }
 
     const protocol = window.location.protocol;
-    const port = window.location.port ? `:${window.location.port}` : '';
+    // When accessing from laptop localhost, use the machine's local Wi-Fi IP (192.168.1.13:3000)
+    // so mobile phones scanning the QR on same Wi-Fi can open it without connection errors!
     const host =
-      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
-      qr.localIp &&
-      qr.localIp !== 'localhost'
-        ? `${qr.localIp}${port}`
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? (networkHost || '192.168.1.13:3000')
         : window.location.host;
 
     return `${protocol}//${host}/customer?scanToken=${encodeURIComponent(qr.token)}&clientId=${encodeURIComponent(clientId)}&expiresAt=${qr.expiresAt}&sig=${encodeURIComponent(sig || '')}`;
@@ -597,6 +611,25 @@ export default function StaffScannerPage() {
               </button>
             </div>
           )}
+
+          {/* Active Network Host Indicator for Mobile Phone Scanning */}
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 12px',
+              borderRadius: '10px',
+              background: 'rgba(59, 130, 246, 0.12)',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              color: '#93c5fd',
+              fontSize: '0.78rem',
+              marginBottom: '12px',
+            }}
+          >
+            <Wifi size={13} />
+            <span>Mobile Wi-Fi IP: <strong>{networkHost}</strong></span>
+          </div>
 
           {/* COUNTDOWN TIMER BADGE */}
           <div

@@ -38,6 +38,7 @@ import {
   Download,
   AlertCircle,
   FileText,
+  Wifi,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
@@ -49,7 +50,6 @@ import { Staff, LoyaltyProgram, Customer, VisitLog, CustomerReward } from '@/typ
 type ManagerSection =
   | 'dashboard'
   | 'customers'
-  | 'scanner'
   | 'rewards'
   | 'redemptions'
   | 'analytics'
@@ -104,6 +104,20 @@ export default function CafeAdminDashboard() {
   } | null>(null);
   const [terminalSecondsRemaining, setTerminalSecondsRemaining] = useState<number>(30);
   const [terminalQRLoading, setTerminalQRLoading] = useState<boolean>(false);
+  const [networkHost, setNetworkHost] = useState<string>('192.168.1.13:3000');
+
+  // Discover local Wi-Fi IP so mobile devices scanning QR connect directly
+  useEffect(() => {
+    fetch('/api/network-ip')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.preferredIp && data.preferredIp !== 'localhost') {
+          const port = window.location.port ? `:${window.location.port}` : ':3000';
+          setNetworkHost(`${data.preferredIp}${port}`);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Generates clickable web URL that Google Lens and mobile camera apps recognize
   const getSmartTerminalScanUrl = (qr: typeof terminalQR) => {
@@ -121,12 +135,11 @@ export default function CafeAdminDashboard() {
     }
 
     const protocol = window.location.protocol;
-    const port = window.location.port ? `:${window.location.port}` : '';
+    // When accessing from laptop localhost, use the machine's local Wi-Fi IP (192.168.1.13:3000)
+    // so mobile phones scanning the QR on same Wi-Fi can open it without connection errors!
     const host =
-      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
-      qr.localIp &&
-      qr.localIp !== 'localhost'
-        ? `${qr.localIp}${port}`
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? (networkHost || '192.168.1.13:3000')
         : window.location.host;
 
     return `${protocol}//${host}/customer?scanToken=${encodeURIComponent(qr.token)}&clientId=${encodeURIComponent(clientId)}&expiresAt=${qr.expiresAt}&sig=${encodeURIComponent(sig || '')}`;
@@ -765,7 +778,6 @@ export default function CafeAdminDashboard() {
             {[
               { id: 'dashboard', label: 'Dashboard', icon: Activity },
               { id: 'customers', label: 'Customers', icon: Users },
-              { id: 'scanner', label: 'Staff Scanner', icon: QrCode },
               { id: 'rewards', label: 'Rewards & Perks', icon: Gift },
               { id: 'redemptions', label: 'Redemptions', icon: Award },
               { id: 'analytics', label: 'Analytics & Reports', icon: BarChart2 },
@@ -947,7 +959,6 @@ export default function CafeAdminDashboard() {
             <h1 style={{ fontSize: '1.6rem', fontWeight: 800, marginTop: '2px', color: '#fff' }}>
               {activeSection === 'dashboard' && 'Operations Dashboard'}
               {activeSection === 'customers' && 'Customer Directory'}
-              {activeSection === 'scanner' && 'Staff Scanner Terminal'}
               {activeSection === 'rewards' && 'Rewards & Perks'}
               {activeSection === 'redemptions' && 'Redemptions Audit'}
               {activeSection === 'analytics' && 'Analytics & Reports'}
@@ -970,12 +981,12 @@ export default function CafeAdminDashboard() {
               <span>{loading ? 'Refreshing...' : 'Refresh'}</span>
             </button>
             <button
-              onClick={() => setActiveSection('scanner')}
+              onClick={() => setActiveSection('staff')}
               className="btn-primary"
               style={{ padding: '8px 14px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
             >
-              <QrCode size={14} />
-              <span>Staff Scanner / Visit Terminal</span>
+              <ShieldCheck size={14} />
+              <span>Staff Management</span>
             </button>
           </div>
         </div>
@@ -1358,11 +1369,8 @@ export default function CafeAdminDashboard() {
           </div>
         )}
 
-        {/* ========================================================= */}
-        {/* ========================================================= */}
-        {/* VIEW 3: STAFF SCANNER / VISIT TERMINAL (REVERSE QR)       */}
-        {/* ========================================================= */}
-        {activeSection === 'scanner' && (
+        {/* Scanner Terminal is managed exclusively on /staff */}
+        {false && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '26px' }}>
             {/* Top Terminal Action Bar */}
             <div
@@ -1523,6 +1531,25 @@ export default function CafeAdminDashboard() {
                     </button>
                   </div>
                 )}
+
+                {/* Active Network Host Indicator for Mobile Phone Scanning */}
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '4px 12px',
+                    borderRadius: '10px',
+                    background: 'rgba(59, 130, 246, 0.12)',
+                    border: '1px solid rgba(59, 130, 246, 0.3)',
+                    color: '#93c5fd',
+                    fontSize: '0.78rem',
+                    marginBottom: '12px',
+                  }}
+                >
+                  <Wifi size={13} />
+                  <span>Mobile Wi-Fi IP: <strong>{networkHost}</strong></span>
+                </div>
 
                 {/* COUNTDOWN TIMER BADGE: Expires in 00:27 */}
                 <div

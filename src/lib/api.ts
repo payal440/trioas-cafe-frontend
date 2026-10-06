@@ -13,10 +13,21 @@ import {
   ClientActivity,
 } from '@/types';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+export const getApiBaseUrl = (): string => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== 'undefined') {
+    // In browser (both laptop and mobile phone), use relative URL '' so requests route
+    // seamlessly through Next.js on port 3000 -> backend port 5000.
+    // This completely eliminates Windows Firewall port 5000 blockages and CORS issues on mobile!
+    return '';
+  }
+  return 'http://localhost:5000';
+};
 
 export const apiClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: typeof window !== 'undefined' ? '' : 'http://localhost:5000',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -50,8 +61,11 @@ export const setStoredToken = (role: string, token: string | null) => {
   }
 };
 
-// Request interceptor to attach Bearer token
+// Request interceptor to attach dynamic baseURL & Bearer token
 apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  if (typeof window !== 'undefined') {
+    config.baseURL = getApiBaseUrl();
+  }
   const customRole = (config as any).role;
   const token = getStoredToken(customRole);
   if (token && config.headers) {
